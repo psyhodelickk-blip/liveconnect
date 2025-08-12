@@ -9,29 +9,101 @@ datasource db {
 }
 
 model User {
-  id        Int       @id @default(autoincrement())
-  username  String?   @unique
+  id        Int      @id @default(autoincrement())
+  username  String?  @unique
   password  String
-  email     String?   @unique
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt @default(now())
+  email     String?  @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  // relacije poruka
+  // Poruke
   sentMessages     Message[] @relation("sent_messages")
   receivedMessages Message[] @relation("received_messages")
+
+  // Ekonomija
+  wallet       Wallet?
+  transactions CoinTransaction[] // 1-N direktno na User
+
+  // Gifts (opposite polja za GiftEvent.from / GiftEvent.to)
+  giftsSent     GiftEvent[] @relation("gift_from")
+  giftsReceived GiftEvent[] @relation("gift_to")
 }
 
 model Message {
-  id          Int      @id @default(autoincrement())
+  id          Int       @id @default(autoincrement())
   senderId    Int
   recipientId Int
   content     String
-  createdAt   DateTime @default(now())
+  createdAt   DateTime  @default(now())
   readAt      DateTime?
 
-  sender      User     @relation("sent_messages", fields: [senderId], references: [id], onDelete: Cascade)
-  recipient   User     @relation("received_messages", fields: [recipientId], references: [id], onDelete: Cascade)
+  sender    User @relation("sent_messages", fields: [senderId], references: [id], onDelete: Cascade)
+  recipient User @relation("received_messages", fields: [recipientId], references: [id], onDelete: Cascade)
 
   @@index([senderId, recipientId, createdAt])
   @@index([recipientId, readAt])
+}
+
+model Wallet {
+  id        Int      @id @default(autoincrement())
+  userId    Int      @unique
+  balance   Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // 1-1 ka User (fields+references definisani ovde)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+enum TxType {
+  PURCHASE
+  TIP
+  GIFT
+  CALL_MIN
+  REFUND
+  ADJUST
+}
+
+model CoinTransaction {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  type      TxType
+  amount    Int
+  reference String?  @unique
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  // 1-N ka User (opposite: User.transactions)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}
+
+model GiftCatalog {
+  id        Int      @id @default(autoincrement())
+  code      String   @unique
+  name      String
+  price     Int
+  iconUrl   String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  // opposite polje za GiftEvent.gift
+  events GiftEvent[]
+}
+
+model GiftEvent {
+  id         Int      @id @default(autoincrement())
+  fromUserId Int
+  toUserId   Int
+  giftId     Int
+  message    String?
+  coins      Int
+  createdAt  DateTime @default(now())
+
+  from User        @relation("gift_from", fields: [fromUserId], references: [id], onDelete: Cascade)
+  to   User        @relation("gift_to", fields: [toUserId], references: [id], onDelete: Cascade)
+  gift GiftCatalog @relation(fields: [giftId], references: [id], onDelete: Restrict)
+
+  @@index([fromUserId, toUserId, createdAt])
 }
