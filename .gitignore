@@ -1,0 +1,16 @@
+# Ignoriši node_modules
+node_modules/
+
+# Ignoriši .env fajl (tajne)
+.env
+
+# Ignoriši build fajlove
+dist/
+build/
+
+# Prisma generisani fajlovi
+prisma/migrations/
+
+# OS fajlovi
+.DS_Store
+Thumbs.db
