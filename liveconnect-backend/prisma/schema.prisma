@@ -1,3 +1,4 @@
+// prisma/schema.prisma
 generator client {
   provider = "prisma-client-js"
 }
@@ -8,43 +9,29 @@ datasource db {
 }
 
 model User {
-  id        Int      @id @default(autoincrement())
-  username  String   @unique
+  id        Int       @id @default(autoincrement())
+  username  String?   @unique
   password  String
-  createdAt DateTime @default(now())
+  email     String?   @unique
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt @default(now())
 
-  sentMessages         Message[]     @relation("SentMessages")
-  receivedMessages     Message[]     @relation("ReceivedMessages")
-  sentTransactions     Transaction[] @relation("SentTransactions")
-  receivedTransactions Transaction[] @relation("ReceivedTransactions")
-  balanceCents         Int           @default(0)
+  // relacije poruka
+  sentMessages     Message[] @relation("sent_messages")
+  receivedMessages Message[] @relation("received_messages")
 }
 
 model Message {
-  id         Int      @id @default(autoincrement())
-  content    String
-  nsfw       Boolean  @default(false)
-  senderId   Int
-  receiverId Int
-  sender     User     @relation("SentMessages", fields: [senderId], references: [id])
-  receiver   User     @relation("ReceivedMessages", fields: [receiverId], references: [id])
-  createdAt  DateTime @default(now())
-}
-
-model Transaction {
   id          Int      @id @default(autoincrement())
   senderId    Int
-  receiverId  Int
-  amountCents Int // gross amount in cents (what sender paid)
-  feeCents    Int // fee taken by platform (10%)
-  netCents    Int // net amount receiver receives (amountCents - feeCents)
+  recipientId Int
+  content     String
   createdAt   DateTime @default(now())
+  readAt      DateTime?
 
-  sender   User @relation("SentTransactions", fields: [senderId], references: [id])
-  receiver User @relation("ReceivedTransactions", fields: [receiverId], references: [id])
-}
+  sender      User     @relation("sent_messages", fields: [senderId], references: [id], onDelete: Cascade)
+  recipient   User     @relation("received_messages", fields: [recipientId], references: [id], onDelete: Cascade)
 
-model Platform {
-  id        Int @id @default(autoincrement())
-  totalFees Int @default(0) // cents
+  @@index([senderId, recipientId, createdAt])
+  @@index([recipientId, readAt])
 }
