@@ -2,10 +2,12 @@
 import dotenv from "dotenv";
 import express from "express";
 import cors from "cors";
+import cookieParser from "cookie-parser";
 
 // rute
 import healthRouter from "./routes/health.js";
-import dbRouter from "./routes/db.js";
+import dbRouter from "./routes/db.js";       // ako nemaš ovaj fajl, možeš privremeno da obrišeš ovu liniju
+import authRouter from "./routes/auth.js";   // novi auth ruter
 
 dotenv.config();
 
@@ -17,6 +19,7 @@ const CORS_ORIGIN = process.env.CORS_ORIGIN || "http://localhost:3000";
 
 // Middlewares
 app.use(express.json());
+app.use(cookieParser());
 app.use(
   cors({
     origin: CORS_ORIGIN,
@@ -26,7 +29,8 @@ app.use(
 
 // Routes
 app.use(healthRouter);
-app.use(dbRouter);
+try { app.use(dbRouter); } catch {}
+app.use(authRouter);
 
 // Root ping
 app.get("/", (_req, res) => res.send("LiveConnect backend up"));
