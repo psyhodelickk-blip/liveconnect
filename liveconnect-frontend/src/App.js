@@ -1,57 +1,68 @@
 // src/App.js
 import React, { useEffect, useState } from "react";
+import { BrowserRouter, Routes, Route, Navigate, useNavigate } from "react-router-dom";
 import { api } from "./services/api";
 import { connectSocket, disconnectSocket } from "./socket";
-import AuthTest from "./AuthTest";
-import MessagesTest from "./MessagesTest";
+import Login from "./pages/Login";
+import Chat from "./pages/Chat";
 
-export default function App() {
+function AppShell() {
   const [user, setUser] = useState(null);
   const [checking, setChecking] = useState(true);
 
+  // proveri sesiju na start
   useEffect(() => {
     (async () => {
       try {
         const { data } = await api.get("/auth/me");
         if (data?.ok && data?.user) {
           setUser(data.user);
-          connectSocket(); // handshake koristi cookie
+          connectSocket();
         }
       } catch {}
       setChecking(false);
     })();
   }, []);
 
-  function handleAuth(u) {
-    setUser(u || null);
-    if (u) connectSocket();
-  }
-  function handleLogout() {
+  const onAuth = (u) => {
+    setUser(u);
+    connectSocket();
+  };
+
+  const onLogout = async () => {
+    try { await api.post("/auth/logout"); } catch {}
     setUser(null);
     disconnectSocket();
+  };
+
+  if (checking) {
+    return <div style={{ padding: 24, fontFamily: "sans-serif" }}>Provera sesije...</div>;
   }
 
   return (
-    <div style={{ maxWidth: 900, margin: "20px auto", padding: 12, fontFamily: "sans-serif" }}>
-      <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-        <h1 style={{ margin: 0 }}>LiveConnect</h1>
-        <div style={{ fontSize: 14, color: "#444" }}>
-          {checking ? "Provera sesije..." : user ? (
-            <>Ulogovan: <b>{user.username}</b> (id: {user.id})</>
-          ) : (
-            "Nisi ulogovan"
-          )}
-        </div>
-      </header>
+    <Routes>
+      <Route
+        path="/login"
+        element={user ? <Navigate to="/chat" replace /> : <Login onAuth={onAuth} />}
+      />
+      <Route
+        path="/chat"
+        element={
+          user ? <Chat user={user} onLogout={onLogout} /> : <Navigate to="/login" replace />
+        }
+      />
+      <Route
+        path="*"
+        element={<Navigate to={user ? "/chat" : "/login"} replace />}
+      />
+    </Routes>
+  );
+}
 
-      <AuthTest onAuth={handleAuth} onLogout={handleLogout} />
-
-      {user && (
-        <>
-          <hr style={{ margin: "28px 0" }} />
-          <MessagesTest currentUser={user} />
-        </>
-      )}
-    </div>
+export default function App() {
+  return (
+    <BrowserRouter>
+      <AppShell />
+    </BrowserRouter>
   );
 }

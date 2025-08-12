@@ -1,51 +1,33 @@
-import React, { useEffect, useState } from 'react';
-import { getMessages, sendMessage } from '../services/api';
-import MessageList from '../components/MessageList';
-import MessageInput from '../components/MessageInput';
+// src/pages/Chat.jsx
+import React from "react";
+import { useNavigate } from "react-router-dom";
+import MessagesTest from "../MessagesTest";
+import { api } from "../services/api";
+import { disconnectSocket } from "../socket";
 
-const Chat = () => {
-  const [messages, setMessages] = useState([]);
-  const [error, setError] = useState('');
+export default function Chat({ user, onLogout = () => {} }) {
+  const navigate = useNavigate();
 
-  const fetchMessages = async () => {
-    try {
-      const data = await getMessages();
-      if (data.success === false) {
-        setError(data.message || 'Greška pri učitavanju poruka');
-      } else {
-        setMessages(data);
-      }
-    } catch {
-      setError('Greška pri učitavanju poruka');
-    }
-  };
-
-  useEffect(() => {
-    fetchMessages();
-  }, []);
-
-  const handleSendMessage = async (receiverId, content, nsfw) => {
-    setError('');
-    try {
-      const res = await sendMessage(receiverId, content, nsfw);
-      if (res.success) {
-        fetchMessages();
-      } else {
-        setError(res.message || 'Greška pri slanju poruke');
-      }
-    } catch {
-      setError('Greška pri slanju poruke');
-    }
-  };
+  async function doLogout() {
+    try { await api.post("/auth/logout"); } catch {}
+    disconnectSocket();
+    onLogout();
+    navigate("/login", { replace: true });
+  }
 
   return (
-    <div>
-      <h2>LiveConnect Chat</h2>
-      {error && <p style={{ color: 'red' }}>{error}</p>}
-      <MessageList messages={messages} />
-      <MessageInput onSend={handleSendMessage} />
+    <div style={{ maxWidth: 920, margin: "20px auto", padding: 12, fontFamily: "sans-serif" }}>
+      <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+        <h1 style={{ margin: 0 }}>LiveConnect</h1>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <span style={{ fontSize: 14, color: "#444" }}>
+            Ulogovan: <b>{user.username}</b> (id: {user.id})
+          </span>
+          <button onClick={doLogout}>Logout</button>
+        </div>
+      </header>
+
+      <MessagesTest currentUser={user} />
     </div>
   );
-};
-
-export default Chat;
+}
