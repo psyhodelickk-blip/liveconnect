@@ -13,12 +13,19 @@ export default function Chat({ user, onLogout = () => {} }) {
   const navigate = useNavigate();
   const [selected, setSelected] = useState("");
   const [showGifts, setShowGifts] = useState(false);
+  const [quickPeer, setQuickPeer] = useState("");
 
   async function doLogout() {
     try { await api.post("/auth/logout"); } catch {}
     disconnectSocket();
     onLogout();
     navigate("/login", { replace: true });
+  }
+
+  function openQuick() {
+    const u = String(quickPeer || "").trim().toLowerCase();
+    if (!u || u === String(user?.username || "").toLowerCase()) return;
+    setSelected(u);
   }
 
   return (
@@ -40,9 +47,10 @@ export default function Chat({ user, onLogout = () => {} }) {
           {showGifts ? "Sakrij gifts" : "Prikaži gifts"}
         </button>
       </div>
+
       {showGifts && (
         <div style={{ border: "1px solid #eee", borderRadius: 12, marginBottom: 12, background: "#fff" }}>
-          <GiftGrid peerUsername={selected} onSent={() => { /* može toast/animacija */ }} />
+          <GiftGrid peerUsername={selected} onSent={() => {}} />
         </div>
       )}
 
@@ -50,7 +58,19 @@ export default function Chat({ user, onLogout = () => {} }) {
         <Conversations currentUser={user} selected={selected} onSelect={setSelected} />
         <div style={{ display: "flex", flexDirection: "column", flex: 1 }}>
           {!selected ? (
-            <div style={{ padding: 24, color: "#666" }}>Izaberi razgovor sa leve strane.</div>
+            <div style={{ padding: 24, color: "#666" }}>
+              <div style={{ marginBottom: 8 }}>Izaberi razgovor sa leve strane ili započni novi:</div>
+              <div style={{ display: "flex", gap: 6, maxWidth: 360 }}>
+                <input
+                  value={quickPeer}
+                  placeholder="username..."
+                  onChange={(e) => setQuickPeer(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && openQuick()}
+                  style={{ flex: 1, padding: 6, border: "1px solid #ddd", borderRadius: 8 }}
+                />
+                <button onClick={openQuick}>Otvori</button>
+              </div>
+            </div>
           ) : (
             <>
               <div style={{ padding: "10px 12px", borderBottom: "1px solid #eee", background: "#fff" }}>

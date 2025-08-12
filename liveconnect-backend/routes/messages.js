@@ -1,172 +1,173 @@
-// routes/messages.js (ESM)
+// routes/messages.js
 import { Router } from "express";
 import { prisma } from "../prismaClient.js";
 import { requireAuth } from "../middleware/requireAuth.js";
-import { emitToUser } from "../realtime/io.js";
 
 const router = Router();
+const norm = (s) => String(s || "").trim().toLowerCase();
 
-function normU(u) { return String(u || "").trim().toLowerCase(); }
-
-/**
- * GET /messages/conversations
- * Poslednja poruka po peer-u + unread count.
- */
-router.get("/messages/conversations", requireAuth, async (req, res) => {
-  try {
-    const userId = req.userId;
-
-    const rows = await prisma.$queryRaw`
-      WITH t AS (
-        SELECT m.*,
-               CASE WHEN m."senderId" = ${userId} THEN m."recipientId" ELSE m."senderId" END AS peer_id
-        FROM "Message" m
-        WHERE m."senderId" = ${userId} OR m."recipientId" = ${userId}
-      )
-      SELECT DISTINCT ON (peer_id)
-        t.id, t."senderId", t."recipientId", t.content, t."createdAt", t."readAt",
-        u.id AS "peerId", u.username AS "peerUsername"
-      FROM t
-      JOIN "User" u ON u.id = t.peer_id
-      ORDER BY peer_id, t.id DESC
-      LIMIT 100;
-    `;
-
-    const unreadRows = await prisma.$queryRaw`
-      SELECT m."senderId" AS peer_id, COUNT(*)::int AS unread
-      FROM "Message" m
-      WHERE m."recipientId" = ${userId} AND m."readAt" IS NULL
-      GROUP BY m."senderId";
-    `;
-    const unreadMap = new Map(unreadRows.map(r => [Number(r.peer_id), Number(r.unread)]));
-
-    const items = rows.map(r => ({
-      peer: { id: Number(r.peerId), username: r.peerUsername },
-      lastMessage: {
-        id: Number(r.id),
-        senderId: Number(r.senderId),
-        recipientId: Number(r.recipientId),
-        content: String(r.content),
-        createdAt: r.createdAt,
-        readAt: r.readAt,
-      },
-      unread: unreadMap.get(Number(r.peerId)) ?? 0,
-    }));
-    items.sort((a, b) => new Date(b.lastMessage.createdAt) - new Date(a.lastMessage.createdAt));
-    return res.json({ ok: true, items });
-  } catch (err) {
-    return res.status(500).json({ ok: false, error: err?.message || "Conversations load failed" });
-  }
-});
-
-/** POST /messages/send */
 router.post("/messages/send", requireAuth, async (req, res) => {
   try {
-    const { toUsername, toUserId, content } = req.body || {};
-    if (!content || (!toUsername && !toUserId)) {
-      return res.status(400).json({ ok: false, error: "content i (toUsername ili toUserId) su obavezni" });
+    const toUsername = norm(req.body?.to);
+    const content = String(req.body?.content || "").trim();
+    if (!toUsername || !content) {
+      return res.status(400).json({ ok: false, error: "to i content su obavezni" });
     }
 
-    let recipient = null;
-    if (toUserId) {
-      recipient = await prisma.user.findUnique({ where: { id: Number(toUserId) } });
-    } else {
-      const username = normU(toUsername);
-      recipient = await prisma.user.findUnique({ where: { username } });
-    }
-    if (!recipient) return res.status(404).json({ ok: false, error: "Primaoc nije pronađen" });
-    if (recipient.id === req.userId) return res.status(400).json({ ok: false, error: "Ne možeš slati sebi" });
+    const to = await prisma.user.findUnique({ where: { username: toUsername } });
+    if (!to) return res.status(404).json({ ok: false, error: "primaoc ne postoji" });
+    if (to.id === req.userId) return res.status(400).json({ ok: false, error: "ne možeš poslati sebi" });
 
     const msg = await prisma.message.create({
-      data: { senderId: req.userId, recipientId: recipient.id, content: String(content) },
-      include: {
-        sender: { select: { id: true, username: true } },
-        recipient: { select: { id: true, username: true } },
-      },
+      data: { senderId: req.userId, recipientId: to.id, content },
     });
 
-    emitToUser(recipient.id, "message:new", msg);
-    emitToUser(req.userId, "message:new", msg);
+    // Socket emit (ako imaš realtime/io.js sa emitToUser)
+    try {
+      const { emitToUser } = await import("../realtime/io.js");
+      emitToUser?.(to.id, "messages:new", {
+        id: msg.id,
+        fromUserId: req.userId,
+        toUserId: to.id,
+        content,
+        createdAt: msg.createdAt,
+      });
+    } catch (_) {}
 
-    return res.json({ ok: true, message: msg });
-  } catch (err) {
-    return res.status(500).json({ ok: false, error: err?.message || "Send failed" });
+    return res.json({
+      ok: true,
+      message: {
+        id: msg.id,
+        senderId: msg.senderId,
+        recipientId: msg.recipientId,
+        content: msg.content,
+        createdAt: msg.createdAt,
+      },
+    });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || "send failed" });
   }
 });
 
-/** GET /messages/thread/:username */
-router.get("/messages/thread/:username", requireAuth, async (req, res) => {
-  try {
-    const otherName = normU(req.params.username);
-    const other = await prisma.user.findUnique({ where: { username: otherName } });
-    if (!other) return res.status(404).json({ ok: false, error: "Korisnik nije pronađen" });
-
-    const take = Math.min(parseInt(req.query.limit ?? "50", 10), 100);
-    const cursorId = req.query.cursor ? Number(req.query.cursor) : null;
-
-    const msgs = await prisma.message.findMany({
-      where: {
-        OR: [
-          { senderId: req.userId, recipientId: other.id },
-          { senderId: other.id, recipientId: req.userId },
-        ],
-      },
-      orderBy: { id: "desc" },
-      take,
-      ...(cursorId ? { cursor: { id: cursorId }, skip: 1 } : {}),
-      include: {
-        sender: { select: { id: true, username: true } },
-        recipient: { select: { id: true, username: true } },
-      },
-    });
-
-    const nextCursor = msgs.length === take ? msgs[msgs.length - 1].id : null;
-    return res.json({ ok: true, items: msgs, nextCursor });
-  } catch (err) {
-    return res.status(500).json({ ok: false, error: err?.message || "Thread load failed" });
-  }
-});
-
-/** GET /messages/recent */
+// Sažetak konverzacija (recent)
 router.get("/messages/recent", requireAuth, async (req, res) => {
   try {
-    const take = Math.min(parseInt(req.query.limit ?? "50", 10), 100);
-    const items = await prisma.message.findMany({
-      where: { OR: [{ senderId: req.userId }, { recipientId: req.userId }] },
-      orderBy: { id: "desc" },
-      take,
-      include: {
-        sender: { select: { id: true, username: true } },
-        recipient: { select: { id: true, username: true } },
+    // Nadji sve peer-ove sa kojima je korisnik razmenio poruke ili giftove
+    const userId = req.userId;
+
+    const lastMsgs = await prisma.message.findMany({
+      where: {
+        OR: [
+          { senderId: userId },
+          { recipientId: userId },
+        ],
       },
+      orderBy: { createdAt: "desc" },
+      take: 200,
     });
-    return res.json({ ok: true, items });
-  } catch (err) {
-    return res.status(500).json({ ok: false, error: err?.message || "Recent load failed" });
+
+    const lastGifts = await prisma.giftEvent.findMany({
+      where: {
+        OR: [
+          { fromUserId: userId },
+          { toUserId: userId },
+        ],
+      },
+      include: { from: { select: { id: true, username: true } }, to: { select: { id: true, username: true } }, gift: true },
+      orderBy: { createdAt: "desc" },
+      take: 200,
+    });
+
+    // grupišemo po peeru i uzimamo najskoriji item (msg ili gift)
+    const map = new Map(); // key = peerId
+    function pushCandidate(peerId, peerUsername, item) {
+      const prev = map.get(peerId);
+      if (!prev || new Date(item.createdAt) > new Date(prev.createdAt)) {
+        map.set(peerId, { peer: { id: peerId, username: peerUsername }, last: item });
+      }
+    }
+
+    for (const m of lastMsgs) {
+      const peerId = m.senderId === userId ? m.recipientId : m.senderId;
+      const peer = await prisma.user.findUnique({ where: { id: peerId }, select: { username: true } });
+      pushCandidate(peerId, peer?.username || "", { kind: "msg", id: `m-${m.id}`, content: m.content, createdAt: m.createdAt });
+    }
+
+    for (const g of lastGifts) {
+      const peerId = g.fromUserId === userId ? g.toUserId : g.fromUserId;
+      const peerUsername = g.fromUserId === userId ? g.to.username : g.from.username;
+      pushCandidate(peerId, peerUsername || "", {
+        kind: "gift",
+        id: `g-${g.id}`,
+        createdAt: g.createdAt,
+        code: g.gift.code, name: g.gift.name, price: g.gift.price,
+        fromUserId: g.fromUserId, toUserId: g.toUserId,
+      });
+    }
+
+    const threads = Array.from(map.values()).sort((a, b) => new Date(b.last.createdAt) - new Date(a.last.createdAt));
+    return res.json({ ok: true, threads });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || "recent failed" });
   }
 });
 
-/** POST /messages/read  Body: { fromUsername } */
-router.post("/messages/read", requireAuth, async (req, res) => {
+// Jedna nit: PORUKE + GIFT-ovi u istom vremenskom nizu
+router.get("/messages/thread", requireAuth, async (req, res) => {
   try {
-    const { fromUsername } = req.body || {};
-    if (!fromUsername) return res.status(400).json({ ok: false, error: "fromUsername je obavezan" });
+    const peerUsername = norm(req.query?.peer);
+    if (!peerUsername) return res.status(400).json({ ok: false, error: "peer je obavezan" });
 
-    const other = await prisma.user.findUnique({ where: { username: normU(fromUsername) } });
-    if (!other) return res.status(404).json({ ok: false, error: "Korisnik nije pronađen" });
+    const peer = await prisma.user.findUnique({ where: { username: peerUsername } });
+    if (!peer) return res.status(404).json({ ok: false, error: "peer nije pronađen" });
 
-    const result = await prisma.message.updateMany({
-      where: { senderId: other.id, recipientId: req.userId, readAt: null },
-      data: { readAt: new Date() },
-    });
+    const [msgs, gifts] = await Promise.all([
+      prisma.message.findMany({
+        where: {
+          OR: [
+            { senderId: req.userId, recipientId: peer.id },
+            { senderId: peer.id, recipientId: req.userId },
+          ],
+        },
+        orderBy: { createdAt: "asc" },
+        take: 200,
+      }),
+      prisma.giftEvent.findMany({
+        where: {
+          OR: [
+            { fromUserId: req.userId, toUserId: peer.id },
+            { fromUserId: peer.id, toUserId: req.userId },
+          ],
+        },
+        include: { gift: true },
+        orderBy: { createdAt: "asc" },
+        take: 200,
+      }),
+    ]);
 
-    // realtime: obavesti oba klijenta da je pročitan peer thread
-    emitToUser(req.userId,  "messages:read", { peerId: other.id });
-    emitToUser(other.id,    "messages:read", { peerId: req.userId });
+    const timeline = [
+      ...msgs.map(m => ({
+        kind: "msg",
+        id: `m-${m.id}`,
+        createdAt: m.createdAt,
+        senderId: m.senderId,
+        content: m.content,
+      })),
+      ...gifts.map(g => ({
+        kind: "gift",
+        id: `g-${g.id}`,
+        createdAt: g.createdAt,
+        fromUserId: g.fromUserId,
+        toUserId: g.toUserId,
+        coins: g.coins,
+        message: g.message || "",
+        gift: { code: g.gift.code, name: g.gift.name, price: g.gift.price, iconUrl: g.gift.iconUrl },
+      })),
+    ].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
 
-    return res.json({ ok: true, updated: result.count });
-  } catch (err) {
-    return res.status(500).json({ ok: false, error: err?.message || "Mark read failed" });
+    return res.json({ ok: true, items: timeline });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || "thread failed" });
   }
 });
 

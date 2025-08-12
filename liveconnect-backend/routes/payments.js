@@ -20,7 +20,6 @@ async function getBalance(userId) {
   return w.balance;
 }
 
-// Atomicno skidanje sa balansa (sprečava minus)
 async function debitWalletAtomic(userId, amount) {
   const rows = await prisma.$queryRaw`
     UPDATE "Wallet"
@@ -35,7 +34,6 @@ async function debitWalletAtomic(userId, amount) {
   return rows[0].balance;
 }
 
-// GET /coins/balance
 router.get("/coins/balance", requireAuth, async (req, res) => {
   try {
     const balance = await getBalance(req.userId);
@@ -45,7 +43,6 @@ router.get("/coins/balance", requireAuth, async (req, res) => {
   }
 });
 
-// POST /coins/purchase  (DEV helper)
 router.post("/coins/purchase", requireAuth, async (req, res) => {
   try {
     const amount = Math.max(0, parseInt(req.body?.amount ?? 0, 10));
@@ -72,7 +69,6 @@ router.post("/coins/purchase", requireAuth, async (req, res) => {
   }
 });
 
-// POST /coins/tip
 router.post("/coins/tip", requireAuth, async (req, res) => {
   try {
     const toUsername = norm(req.body?.toUsername);
@@ -103,7 +99,6 @@ router.post("/coins/tip", requireAuth, async (req, res) => {
   }
 });
 
-// GET /gifts
 router.get("/gifts", requireAuth, async (_req, res) => {
   try {
     const items = await prisma.giftCatalog.findMany({
@@ -116,7 +111,6 @@ router.get("/gifts", requireAuth, async (_req, res) => {
   }
 });
 
-// POST /gifts/send
 router.post("/gifts/send", requireAuth, async (req, res) => {
   try {
     const toUsername = norm(req.body?.toUsername);
@@ -151,7 +145,17 @@ router.post("/gifts/send", requireAuth, async (req, res) => {
     });
 
     emitToUser(req.userId, "wallet:update", { balance: result.balance });
-    // emitToUser(to.id, "gift:received", { code, fromUserId: req.userId, coins: gift.price });
+    // ✨ PRIMALAC dobija realtime obaveštenje
+    emitToUser(to.id, "gift:received", {
+      fromUserId: req.userId,
+      toUserId: to.id,
+      code: gift.code,
+      name: gift.name,
+      price: gift.price,
+      iconUrl: gift.iconUrl,
+      message,
+      createdAt: new Date().toISOString(),
+    });
 
     res.json({ ok: true, balance: result.balance, txId: result.txId, eventId: result.eventId });
   } catch (e) {
