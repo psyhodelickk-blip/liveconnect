@@ -1,27 +1,33 @@
-import express from 'express';
-import cors from 'cors';
+// LiveConnect backend server (ESM)
+import dotenv from "dotenv";
+import express from "express";
+import cors from "cors";
+import healthRouter from "./routes/health.js";
 
-// Import ruta (pazi da ovi fajlovi postoje u folderu routes)
-import authRoutes from './routes/auth.js';
-import messagesRoutes from './routes/messages.js';
+dotenv.config();
 
 const app = express();
 
-// Omogućavamo da frontend na localhost:3000 može da šalje zahteve (CORS)
-app.use(cors({
-  origin: 'http://localhost:3000', 
-  credentials: true,
-}));
+// Config
+const PORT = Number(process.env.PORT || 4000);
+const CORS_ORIGIN = process.env.CORS_ORIGIN || "http://localhost:3000";
 
-// Ovo omogućava da server razume JSON u telu zahteva
+// Middlewares
 app.use(express.json());
+app.use(
+  cors({
+    origin: CORS_ORIGIN,
+    credentials: true,
+  })
+);
 
-// Povezujemo rute sa URL prefiksima
-app.use('/api/auth', authRoutes);
-app.use('/api/messages', messagesRoutes);
+// Routes
+app.use(healthRouter);
 
-// Pokrećemo server na portu 4000
-const PORT = process.env.PORT || 4000;
+// Root ping
+app.get("/", (_req, res) => res.send("LiveConnect backend up"));
+
+// Start
 app.listen(PORT, () => {
-  console.log(`Server radi na portu ${PORT}`);
+  console.log(`✅ Server listening on http://localhost:${PORT}`);
 });

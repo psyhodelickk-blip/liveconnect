@@ -1,8 +1,10 @@
-const { Router } = require("express");
+// ESM varijanta health rute
+import { Router } from "express";
+
 const router = Router();
 
 router.get("/health", (_req, res) => {
   res.json({ ok: true, time: new Date().toISOString() });
 });
 
-module.exports = router;
+export default router;
