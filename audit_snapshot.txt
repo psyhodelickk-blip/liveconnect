@@ -1,0 +1,681 @@
+===== LiveConnect AUDIT SNAPSHOT =====
+Timestamp: Tue 08/12/2025  4:04:04.68
+
+================================
+"liveconnect-backend\package.json"
+-------------------------------
+{
+  "name": "liveconnect-backend",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "dev": "nodemon server.js",
+    "start": "node server.js",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev --name init"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.22.0",
+    "bcryptjs": "^2.4.3",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.1",
+    "express": "^4.18.2",
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.11.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2",
+    "prisma": "^5.22.0"
+  }
+}
+
+================================
+"liveconnect-backend\server.js"
+-------------------------------
+// LiveConnect backend server (ESM)
+import dotenv from "dotenv";
+import express from "express";
+import cors from "cors";
+import cookieParser from "cookie-parser";
+
+// rute
+import healthRouter from "./routes/health.js";
+import dbRouter from "./routes/db.js";       // ako nemaš ovaj fajl, možeš privremeno da obrišeš ovu liniju
+import authRouter from "./routes/auth.js";   // novi auth ruter
+
+dotenv.config();
+
+const app = express();
+
+// Config
+const PORT = Number(process.env.PORT || 4000);
+const CORS_ORIGIN = process.env.CORS_ORIGIN || "http://localhost:3000";
+
+// Middlewares
+app.use(express.json());
+app.use(cookieParser());
+app.use(
+  cors({
+    origin: CORS_ORIGIN,
+    credentials: true,
+  })
+);
+
+// Routes
+app.use(healthRouter);
+try { app.use(dbRouter); } catch {}
+app.use(authRouter);
+
+// Root ping
+app.get("/", (_req, res) => res.send("LiveConnect backend up"));
+
+// Start
+app.listen(PORT, () => {
+  console.log(`✅ Server listening on http://localhost:${PORT}`);
+});
+
+================================
+"liveconnect-backend\prismaClient.js"
+-------------------------------
+// ESM Prisma singleton (sprečava više instanci u dev-u)
+import { PrismaClient } from "@prisma/client";
+
+const globalForPrisma = globalThis;
+export const prisma = globalForPrisma.__lc_prisma ?? new PrismaClient();
+
+if (process.env.NODE_ENV !== "production") {
+  globalForPrisma.__lc_prisma = prisma;
+}
+
+================================
+"liveconnect-backend\routes\health.js"
+-------------------------------
+// ESM varijanta health rute
+import { Router } from "express";
+
+const router = Router();
+
+router.get("/health", (_req, res) => {
+  res.json({ ok: true, time: new Date().toISOString() });
+});
+
+export default router;
+
+================================
+"liveconnect-backend\routes\db.js"
+-------------------------------
+import { Router } from "express";
+import { prisma } from "../prismaClient.js";
+
+const router = Router();
+
+router.get("/db/health", async (_req, res) => {
+  try {
+    // Ne zavisi od tabela – samo testira konekciju
+    await prisma.$queryRaw`SELECT 1`;
+    res.json({ ok: true, db: "up", time: new Date().toISOString() });
+  } catch (err) {
+    res.status(500).json({
+      ok: false,
+      db: "down",
+      error: err?.message || "Unknown DB error",
+    });
+  }
+});
+
+export default router;
+
+================================
+"liveconnect-backend\routes\auth.js"
+-------------------------------
+import { Router } from "express";
+import { prisma } from "../prismaClient.js";
+import { hashPassword, verifyPassword } from "../utils/password.js";
+import { signJwt } from "../utils/jwt.js";
+import { requireAuth } from "../middleware/requireAuth.js";
+
+const router = Router();
+
+// === Helpers ===============================================================
+
+function sanitizeUser(u) {
+  if (!u) return u;
+  const { passwordHash, ...rest } = u;
+  return rest;
+}
+
+function normalizeUsername(u) {
+  return String(u || "").trim().toLowerCase();
+}
+function isValidUsername(u) {
+  return /^[a-z0-9._]{3,30}$/.test(u);
+}
+
+/** Proveri da li tabela ima određenu kolonu (radi i ako je "User"/"user"). */
+async function tableHasColumn(tableName, columnName) {
+  try {
+    const rows = await prisma.$queryRaw`
+      SELECT EXISTS(
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND lower(table_name) = lower(${tableName})
+          AND lower(column_name) = lower(${columnName})
+      ) AS present
+    `;
+    return Boolean(rows?.[0]?.present);
+  } catch {
+    return false;
+  }
+}
+
+// Keširamo šta tabela ima, da ne pingamo bazu svaki put
+let hasEmailCol = null;
+let hasUsernameCol = null;
+async function ensureColumnInfo() {
+  if (hasEmailCol === null) {
+    hasEmailCol = await tableHasColumn("User", "email");
+  }
+  if (hasUsernameCol === null) {
+    hasUsernameCol = await tableHasColumn("User", "username");
+  }
+}
+
+// === Routes ================================================================
+
+/**
+ * POST /auth/register
+ * Body: { username, password, email?, name? }
+ * - username i password su OBAVEZNI
+ * - email je OPCIONO (koristimo ga samo ako kolona postoji)
+ */
+router.post("/auth/register", async (req, res) => {
+  try {
+    await ensureColumnInfo();
+
+    let { username, password, email, name } = req.body || {};
+    if (!username || !password) {
+      return res.status(400).json({
+        ok: false,
+        error: "Username i password su obavezni",
+      });
+    }
+
+    username = normalizeUsername(username);
+    if (!isValidUsername(username)) {
+      return res.status(400).json({
+        ok: false,
+        error:
+          "Username mora biti 3-30 znakova, samo mala slova, brojevi, tačka ili donja crta (a-z 0-9 . _)",
+      });
+    }
+
+    // Provera da li su zauzeti (dinamički, prema postojećim kolonama)
+    const orConds = [];
+    if (hasUsernameCol) orConds.push({ username });
+    if (hasEmailCol && email) orConds.push({ email: String(email).trim().toLowerCase() });
+
+    if (orConds.length > 0) {
+      const exists = await prisma.user.findFirst({ where: { OR: orConds } });
+      if (exists) {
+        // odredi šta je duplo
+        if (hasEmailCol && email && exists.email === String(email).trim().toLowerCase()) {
+          return res.status(409).json({ ok: false, error: "Email je već zauzet" });
+        }
+        return res.status(409).json({ ok: false, error: "Username je već zauzet" });
+      }
+    }
+
+    const passwordHash = await hashPassword(password);
+
+    // Dinamički sklapamo data samo sa postojećim kolonama
+    const data = { passwordHash, name: name ? String(name) : null };
+    if (hasUsernameCol) data.username = username;
+    if (hasEmailCol && email) data.email = String(email).trim().toLowerCase();
+
+    const user = await prisma.user.create({ data });
+
+    const token = signJwt({ userId: user.id });
+    res.cookie("lc_token", token, {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: false, // true na produkciji (HTTPS)
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+
+    return res.json({ ok: true, user: sanitizeUser(user) });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: err?.message || "Register failed" });
+  }
+});
+
+/**
+ * POST /auth/login
+ * Body varijante:
+ *  - { username, password }  (uvek radi)
+ *  - { email, password }     (samo ako postoji email kolona)
+ */
+router.post("/auth/login", async (req, res) => {
+  try {
+    await ensureColumnInfo();
+
+    let { email, username, password } = req.body || {};
+    if (!password || (!username && !email)) {
+      return res.status(400).json({
+        ok: false,
+        error: "Potrebni su password i (username ili email)",
+      });
+    }
+
+    let user = null;
+
+    // Prvenstveno probaj po username-u (uvek podržan)
+    if (username) {
+      username = normalizeUsername(username);
+      if (!isValidUsername(username)) {
+        return res.status(400).json({ ok: false, error: "Neispravan username format" });
+      }
+      if (hasUsernameCol) {
+        user = await prisma.user.findUnique({ where: { username } });
+      }
+    }
+
+    // Ako nije našao i imamo email kolonu + poslat email – probaj po email-u
+    if (!user && hasEmailCol && email) {
+      email = String(email).trim().toLowerCase();
+      // findFirst jer email možda nije unique u tvojoj šemi
+      user = await prisma.user.findFirst({ where: { email } });
+    }
+
+    if (!user) {
+      return res.status(401).json({ ok: false, error: "Invalid credentials" });
+    }
+
+    const ok = await verifyPassword(password, user.passwordHash);
+    if (!ok) {
+      return res.status(401).json({ ok: false, error: "Invalid credentials" });
+    }
+
+    const token = signJwt({ userId: user.id });
+    res.cookie("lc_token", token, {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: false,
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+
+    return res.json({ ok: true, user: sanitizeUser(user) });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: err?.message || "Login failed" });
+  }
+});
+
+/** GET /auth/me */
+router.get("/auth/me", requireAuth, async (req, res) => {
+  try {
+    const user = await prisma.user.findUnique({ where: { id: req.userId } });
+    if (!user) return res.status(404).json({ ok: false, error: "User not found" });
+    return res.json({ ok: true, user: sanitizeUser(user) });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: err?.message || "Failed to load me" });
+  }
+});
+
+/** POST /auth/logout */
+router.post("/auth/logout", (_req, res) => {
+  res.clearCookie("lc_token", { httpOnly: true, sameSite: "lax", secure: false });
+  return res.json({ ok: true });
+});
+
+export default router;
+
+================================
+"liveconnect-backend\utils\jwt.js"
+-------------------------------
+import jwt from "jsonwebtoken";
+
+const SECRET = process.env.JWT_SECRET || "dev_only_change_me";
+const EXPIRES_IN = "7d";
+
+export function signJwt(payload) {
+  return jwt.sign(payload, SECRET, { expiresIn: EXPIRES_IN });
+}
+
+export function verifyJwt(token) {
+  try {
+    return jwt.verify(token, SECRET);
+  } catch {
+    return null;
+  }
+}
+
+================================
+"liveconnect-backend\utils\password.js"
+-------------------------------
+import bcrypt from "bcryptjs";
+
+const ROUNDS = 10;
+
+export async function hashPassword(plain) {
+  const salt = await bcrypt.genSalt(ROUNDS);
+  return bcrypt.hash(plain, salt);
+}
+
+export async function verifyPassword(plain, hash) {
+  return bcrypt.compare(plain, hash);
+}
+
+================================
+"liveconnect-backend\middleware\requireAuth.js"
+-------------------------------
+import { verifyJwt } from "../utils/jwt.js";
+
+export function requireAuth(req, res, next) {
+  const token = req.cookies?.lc_token;
+  if (!token) return res.status(401).json({ ok: false, error: "No token" });
+
+  const payload = verifyJwt(token);
+  if (!payload) return res.status(401).json({ ok: false, error: "Invalid token" });
+
+  req.userId = payload.userId;
+  next();
+}
+
+================================
+"liveconnect-backend\prisma\schema.prisma"
+-------------------------------
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  username  String   @unique
+  password  String
+  createdAt DateTime @default(now())
+
+  sentMessages         Message[]     @relation("SentMessages")
+  receivedMessages     Message[]     @relation("ReceivedMessages")
+  sentTransactions     Transaction[] @relation("SentTransactions")
+  receivedTransactions Transaction[] @relation("ReceivedTransactions")
+  balanceCents         Int           @default(0)
+}
+
+model Message {
+  id         Int      @id @default(autoincrement())
+  content    String
+  nsfw       Boolean  @default(false)
+  senderId   Int
+  receiverId Int
+  sender     User     @relation("SentMessages", fields: [senderId], references: [id])
+  receiver   User     @relation("ReceivedMessages", fields: [receiverId], references: [id])
+  createdAt  DateTime @default(now())
+}
+
+model Transaction {
+  id          Int      @id @default(autoincrement())
+  senderId    Int
+  receiverId  Int
+  amountCents Int // gross amount in cents (what sender paid)
+  feeCents    Int // fee taken by platform (10%)
+  netCents    Int // net amount receiver receives (amountCents - feeCents)
+  createdAt   DateTime @default(now())
+
+  sender   User @relation("SentTransactions", fields: [senderId], references: [id])
+  receiver User @relation("ReceivedTransactions", fields: [receiverId], references: [id])
+}
+
+model Platform {
+  id        Int @id @default(autoincrement())
+  totalFees Int @default(0) // cents
+}
+
+================================
+"liveconnect-frontend\package.json"
+-------------------------------
+{
+  "name": "liveconnect-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "dependencies": {
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/jest-dom": "^6.6.4",
+    "@testing-library/react": "^16.3.0",
+    "@testing-library/user-event": "^13.5.0",
+    "axios": "^1.11.0",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "react-router-dom": "^6.30.1",
+    "react-scripts": "5.0.1",
+    "socket.io-client": "^4.8.1",
+    "web-vitals": "^2.1.4"
+  },
+  "scripts": {
+    "start": "react-scripts start",
+    "build": "react-scripts build",
+    "test": "react-scripts test",
+    "eject": "react-scripts eject"
+  },
+  "eslintConfig": {
+    "extends": [
+      "react-app",
+      "react-app/jest"
+    ]
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  }
+}
+
+================================
+"liveconnect-frontend\src\services\api.js"
+-------------------------------
+// src/services/api.js
+// Radi i sa Vite i sa CRA. Uvek šalje cookie ka backendu.
+import axios from "axios";
+
+const apiBase =
+  (typeof import.meta !== "undefined" &&
+    import.meta.env &&
+    import.meta.env.VITE_API_URL) ||
+  (typeof process !== "undefined" &&
+    process.env &&
+    process.env.REACT_APP_API_URL) ||
+  "http://localhost:4000";
+
+export const api = axios.create({
+  baseURL: apiBase,
+  withCredentials: true,
+  headers: { "Content-Type": "application/json" },
+});
+
+================================
+"liveconnect-frontend\src\AuthTest.jsx"
+-------------------------------
+// src/AuthTest.jsx
+import React, { useState } from "react";
+import { api } from "./services/api";
+
+export default function AuthTest() {
+  const [username, setUsername] = useState("");
+  const [email, setEmail]       = useState("");
+  const [password, setPassword] = useState("");
+  const [out, setOut]           = useState(null);
+  const [loading, setLoading]   = useState(false);
+
+  const pretty = (v) => JSON.stringify(v, null, 2);
+
+  async function doRegister() {
+    setLoading(true);
+    setOut(null);
+    try {
+      // Backend kod je podešen da je username OBAVEZAN, email OPCIONO.
+      const body = { username, password };
+      if (email.trim()) body.email = email.trim();
+      const { data } = await api.post("/auth/register", body);
+      setOut(data);
+    } catch (err) {
+      setOut(err?.response?.data || { ok: false, error: err.message });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function doLogin() {
+    setLoading(true);
+    setOut(null);
+    try {
+      // Ako uneseš email – login preko email-a; inače preko username-a.
+      const body = { password };
+      if (email.trim()) body.email = email.trim();
+      else body.username = username.trim().toLowerCase();
+
+      const { data } = await api.post("/auth/login", body);
+      setOut(data);
+    } catch (err) {
+      setOut(err?.response?.data || { ok: false, error: err.message });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function doMe() {
+    setLoading(true);
+    setOut(null);
+    try {
+      const { data } = await api.get("/auth/me");
+      setOut(data);
+    } catch (err) {
+      setOut(err?.response?.data || { ok: false, error: err.message });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function doLogout() {
+    setLoading(true);
+    setOut(null);
+    try {
+      const { data } = await api.post("/auth/logout");
+      setOut(data);
+    } catch (err) {
+      setOut(err?.response?.data || { ok: false, error: err.message });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div style={{ maxWidth: 560, margin: "40px auto", fontFamily: "sans-serif" }}>
+      <h2>LiveConnect – Auth Test</h2>
+
+      <div style={{ display: "grid", gap: 10, marginTop: 20 }}>
+        <label>
+          <div>Username (obavezno)</div>
+          <input
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            placeholder="npr. testuser"
+            style={{ width: "100%", padding: 8 }}
+          />
+        </label>
+
+        <label>
+          <div>Email (opciono)</div>
+          <input
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="npr. test@example.com"
+            style={{ width: "100%", padding: 8 }}
+          />
+        </label>
+
+        <label>
+          <div>Password</div>
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="npr. test12345"
+            style={{ width: "100%", padding: 8 }}
+          />
+        </label>
+
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 10 }}>
+          <button onClick={doRegister} disabled={loading} style={{ padding: "8px 14px" }}>
+            {loading ? "..." : "Register"}
+          </button>
+          <button onClick={doLogin} disabled={loading} style={{ padding: "8px 14px" }}>
+            {loading ? "..." : "Login"}
+          </button>
+          <button onClick={doMe} disabled={loading} style={{ padding: "8px 14px" }}>
+            {loading ? "..." : "Me"}
+          </button>
+          <button onClick={doLogout} disabled={loading} style={{ padding: "8px 14px" }}>
+            {loading ? "..." : "Logout"}
+          </button>
+        </div>
+
+        <small>
+          Napomena: backend šalje JWT u <code>lc_token</code> cookie-ju (CORS credentials moraju biti omogućeni).
+        </small>
+
+        <pre
+          style={{
+            background: "#111",
+            color: "#0f0",
+            padding: 12,
+            borderRadius: 8,
+            minHeight: 120,
+            overflowX: "auto",
+          }}
+        >
+{pretty(out)}
+        </pre>
+      </div>
+    </div>
+  );
+}
+
+================================
+"liveconnect-frontend\src\App.js"
+-------------------------------
+import React from 'react';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import Login from './pages/Login';
+import Register from './pages/Register';
+import Chat from './pages/Chat';
+
+function App() {
+  const isLoggedIn = !!localStorage.getItem('token');
+
+  return (
+    <Router>
+      <Routes>
+        <Route path="/login" element={!isLoggedIn ? <Login /> : <Navigate to="/chat" />} />
+        <Route path="/register" element={!isLoggedIn ? <Register /> : <Navigate to="/chat" />} />
+        <Route path="/chat" element={isLoggedIn ? <Chat /> : <Navigate to="/login" />} />
+        <Route path="*" element={<Navigate to={isLoggedIn ? "/chat" : "/login"} />} />
+      </Routes>
+    </Router>
+  );
+}
+
+export default App;
+
