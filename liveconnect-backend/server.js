@@ -2,7 +2,10 @@
 import dotenv from "dotenv";
 import express from "express";
 import cors from "cors";
+
+// rute
 import healthRouter from "./routes/health.js";
+import dbRouter from "./routes/db.js";
 
 dotenv.config();
 
@@ -23,6 +26,7 @@ app.use(
 
 // Routes
 app.use(healthRouter);
+app.use(dbRouter);
 
 // Root ping
 app.get("/", (_req, res) => res.send("LiveConnect backend up"));
