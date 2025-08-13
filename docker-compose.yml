@@ -1,54 +1,46 @@
 services:
   db:
-    image: postgres:15
-    restart: unless-stopped
+    image: postgres:15-alpine
+    container_name: liveconnect-db-1
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: liveconnect
     ports:
-      - "5435:5432"    # spolja (Windows host) koristi 5435 da ne smeta drugim instalacijama
-    volumes:
-      - pgdata:/var/lib/postgresql/data
+      - "5433:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d liveconnect"]
-      interval: 3s
+      interval: 5s
       timeout: 3s
-      retries: 20
+      retries: 30
+    volumes:
+      - pgdata:/var/lib/postgresql/data
 
   backend:
-    build:
-      context: ./liveconnect-backend
-    restart: unless-stopped
+    build: ./liveconnect-backend
+    container_name: liveconnect-backend-1
     environment:
-      NODE_ENV: production
-      PORT: 4000
-      # Unutar docker mreže DB je "db:5432"; kredencijali iznad
-      DATABASE_URL: postgresql://postgres:postgres@db:5432/liveconnect?schema=public
-      JWT_SECRET: change_me
-      CORS_ORIGINS: http://localhost:8080,http://localhost:3000,http://localhost:5173
-      COOKIE_NAME: lc_token
-      COOKIE_SECURE: "false"
-      COOKIE_SAMESITE: lax
-    ports:
-      - "4000:4000"
+      PORT: "4000"
+      JWT_SECRET: "supersecret_dev_only_change_me"
+      DATABASE_URL: "postgresql://postgres:postgres@db:5432/liveconnect?schema=public"
     depends_on:
       db:
         condition: service_healthy
-    # Automatski primeni migracije pre starta servera – sprečava "User table not found"
-    command: >
-      sh -lc "npx prisma migrate deploy && node server.js"
+    ports:
+      - "4000:4000"
+    restart: unless-stopped
 
   frontend:
     build:
       context: ./liveconnect-frontend
       args:
-        REACT_APP_API_URL: http://localhost:4000
-    restart: unless-stopped
+        REACT_APP_API_URL: "http://localhost:4000"
+    container_name: liveconnect-frontend-1
     ports:
       - "8080:80"
     depends_on:
       - backend
+    restart: unless-stopped
 
 volumes:
   pgdata:

@@ -2,7 +2,7 @@ const express = require("express");
 const cors = require("cors");
 require("dotenv").config();
 
-const healthRouter = require("./routes/health");
+const healthRouter = require("./health");
 
 const app = express();
 const PORT = Number(process.env.PORT ?? 4000);

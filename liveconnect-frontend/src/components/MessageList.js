@@ -13,8 +13,6 @@ export default function MessageList({ currentUser, peerUsername }) {
     try {
       const { data } = await api.get("/messages/thread", { params: { peer: String(peerUsername).toLowerCase() } });
       if (data?.ok) setItems(data.items || []);
-    } catch (_) {
-      // ignore
     } finally {
       setLoading(false);
       setTimeout(() => {
@@ -25,34 +23,22 @@ export default function MessageList({ currentUser, peerUsername }) {
 
   useEffect(() => { loadThread(); }, [loadThread]);
 
-  // Realtime: nova poruka / gift
   useEffect(() => {
     const sock = (window && window.lcSocket) || null;
     if (!sock || !sock.on) return;
 
-    const onMsg = (m) => {
-      const me = (currentUser?.id);
-      const isForThisThread =
-        (m.fromUserId === me && m.toUserId && String(peerUsername || "").length) ||
-        (m.toUserId === me && String(peerUsername || "").length);
-      // jednostavnije: samo osveži nit ako je ovo taj peer
-      loadThread();
-    };
+    const refresh = () => loadThread();
 
-    const onGift = (g) => {
-      // ako je poklon iz/ka trenutnom peer-u, osveži
-      const me = currentUser?.id;
-      const isMine = g.fromUserId === me || g.toUserId === me;
-      if (isMine) loadThread();
-    };
+    sock.on("messages:new", refresh);
+    sock.on("gift:received", refresh);
+    sock.on("gift:sent", refresh);
 
-    sock.on("messages:new", onMsg);
-    sock.on("gift:received", onGift);
     return () => {
-      sock.off && sock.off("messages:new", onMsg);
-      sock.off && sock.off("gift:received", onGift);
+      sock.off && sock.off("messages:new", refresh);
+      sock.off && sock.off("gift:received", refresh);
+      sock.off && sock.off("gift:sent", refresh);
     };
-  }, [currentUser?.id, peerUsername, loadThread]);
+  }, [loadThread]);
 
   if (!peerUsername) return <div style={{ padding: 16, color: "#666" }}>Izaberi razgovor sa leve strane.</div>;
   if (loading) return <div style={{ padding: 16 }}>Učitavam…</div>;
@@ -60,18 +46,9 @@ export default function MessageList({ currentUser, peerUsername }) {
   function MsgBubble({ mine, children, ts }) {
     return (
       <div style={{ display: "flex", justifyContent: mine ? "flex-end" : "flex-start", padding: "6px 10px" }}>
-        <div style={{
-          maxWidth: 520,
-          background: mine ? "#dcf8c6" : "#fff",
-          border: "1px solid #eee",
-          borderRadius: 12,
-          padding: 10,
-          boxShadow: "0 1px 1px rgba(0,0,0,0.02)"
-        }}>
+        <div style={{ maxWidth: 520, background: mine ? "#dcf8c6" : "#fff", border: "1px solid #eee", borderRadius: 12, padding: 10 }}>
           <div style={{ whiteSpace: "pre-wrap" }}>{children}</div>
-          <div style={{ textAlign: "right", fontSize: 11, color: "#777", marginTop: 4 }}>
-            {new Date(ts).toLocaleString()}
-          </div>
+          <div style={{ textAlign: "right", fontSize: 11, color: "#777", marginTop: 4 }}>{new Date(ts).toLocaleString()}</div>
         </div>
       </div>
     );
@@ -81,26 +58,13 @@ export default function MessageList({ currentUser, peerUsername }) {
     const g = item.gift || {};
     return (
       <div style={{ display: "flex", justifyContent: "center", padding: "6px 10px" }}>
-        <div style={{
-          width: "min(520px, 90%)",
-          background: "#fffdf7",
-          border: "1px solid #f5e6a3",
-          borderRadius: 12,
-          padding: 12,
-          textAlign: "center",
-        }}>
+        <div style={{ width: "min(520px, 90%)", background: "#fffdf7", border: "1px solid #f5e6a3", borderRadius: 12, padding: 12, textAlign: "center" }}>
           <div style={{ fontSize: 13, color: "#444" }}>
-            {mine ? "Poslao si" : "Dobio si"} gift:&nbsp;<b>{g.name || item.code}</b> ({g.price || item.price} coins)
+            {mine ? "Poslao si" : "Dobio si"} gift: <b>{g.name || item.code}</b> ({g.price || item.price} coins)
           </div>
-          {g.iconUrl ? (
-            <img src={g.iconUrl} alt={g.name} style={{ width: 60, height: 60, objectFit: "contain", margin: "8px auto" }} />
-          ) : (
-            <div style={{ fontSize: 40, lineHeight: "1.2" }}>🎁</div>
-          )}
+          {g.iconUrl ? <img src={g.iconUrl} alt={g.name} style={{ width: 60, height: 60, objectFit: "contain", margin: "8px auto" }} /> : <div style={{ fontSize: 40 }}>🎁</div>}
           {item.message && <div style={{ color: "#555", marginTop: 6 }}>{item.message}</div>}
-          <div style={{ fontSize: 11, color: "#777", marginTop: 6 }}>
-            {new Date(item.createdAt).toLocaleString()}
-          </div>
+          <div style={{ fontSize: 11, color: "#777", marginTop: 6 }}>{new Date(item.createdAt).toLocaleString()}</div>
         </div>
       </div>
     );

@@ -1,8 +1,8 @@
 // src/pages/Chat.jsx
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../services/api";
-import { disconnectSocket } from "../socket";
+import { connectSocket, disconnectSocket } from "../socket";
 import Conversations from "../components/Conversations";
 import MessageList from "../components/MessageList";
 import Composer from "../components/Composer";
@@ -14,6 +14,8 @@ export default function Chat({ user, onLogout = () => {} }) {
   const [selected, setSelected] = useState("");
   const [showGifts, setShowGifts] = useState(false);
   const [quickPeer, setQuickPeer] = useState("");
+
+  useEffect(() => { connectSocket(); }, []); // <— ključna linija
 
   async function doLogout() {
     try { await api.post("/auth/logout"); } catch {}
@@ -43,9 +45,7 @@ export default function Chat({ user, onLogout = () => {} }) {
       <WalletBar currentUser={user} peerUsername={selected} />
 
       <div style={{ marginBottom: 10 }}>
-        <button onClick={() => setShowGifts((v) => !v)}>
-          {showGifts ? "Sakrij gifts" : "Prikaži gifts"}
-        </button>
+        <button onClick={() => setShowGifts((v) => !v)}>{showGifts ? "Sakrij gifts" : "Prikaži gifts"}</button>
       </div>
 
       {showGifts && (
