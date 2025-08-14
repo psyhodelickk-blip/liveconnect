@@ -1,93 +1,92 @@
-﻿import { Router } from "express";
-import { prisma } from "../prismaClient.js";
-import { hashPassword, verifyPassword } from "../utils/password.js";
-import { signJwt } from "../utils/jwt.js";
-import { requireAuth } from "../middleware/requireAuth.js";
+﻿// liveconnect-backend/routes/auth.js
+import express from "express";
+import bcrypt from "bcryptjs";
+import prisma from "../prismaClient.js";
 
-const router = Router();
+const router = express.Router();
 
-function sanitizeUser(u) {
-  if (!u) return u;
-  const { password, ...rest } = u;
-  return rest;
-}
-const norm = (s) => String(s || "").trim().toLowerCase();
-const isU = (u) => /^[a-z0-9._]{3,30}$/.test(u);
-
-function cookieConf(req) {
-  const { name, options } = req.app.locals.cookieOpts || { name: "lc_token", options: {} };
-  return { name, options };
-}
-
-router.post("/auth/register", async (req, res) => {
+// POST /auth/register
+router.post("/register", async (req, res) => {
   try {
-    let { username, password, email } = req.body || {};
-    if (!username || !password) return res.status(400).json({ ok: false, error: "Username i password su obavezni" });
-    username = norm(username);
-    if (!isU(username)) return res.status(400).json({ ok: false, error: "Username 3-30 znakova (a-z 0-9 . _)" });
+    const { username, email, password } = req.body || {};
+    if (!username || !password) {
+      return res.status(400).json({ ok: false, error: "Username i password su obavezni." });
+    }
 
-    // zauzeÄ‡e
     const exists = await prisma.user.findFirst({
-      where: { OR: [{ username }, ...(email ? [{ email: norm(email) }] : [])] },
+      where: {
+        OR: [
+          { username: username },
+          ...(email ? [{ email: email }] : []),
+        ],
+      },
+      select: { id: true },
     });
-    if (exists) return res.status(409).json({ ok: false, error: "Username ili email zauzet" });
 
+    if (exists) {
+      return res.status(400).json({ ok: false, error: "Korisnik već postoji." });
+    }
+
+    const passwordHash = await bcrypt.hash(password, 10);
     const user = await prisma.user.create({
-      data: { username, password: await hashPassword(password), ...(email ? { email: norm(email) } : {}) },
+      data: { username, email: email ?? null, passwordHash },
+      select: { id: true, username: true, email: true, createdAt: true, updatedAt: true },
     });
 
-    const token = signJwt({ userId: user.id });
-    const { name, options } = cookieConf(req);
-    res.cookie(name, token, options);
-    return res.json({ ok: true, user: sanitizeUser(user) });
-  } catch (err) {
-    return res.status(500).json({ ok: false, error: err?.message || "Register failed" });
+    // TODO: set-cookie token/sesija ako treba
+    return res.json({ ok: true, user });
+  } catch (e) {
+    console.error("REGISTER error:", e);
+    return res.status(500).json({ ok: false, error: "Server error" });
   }
 });
 
-router.post("/auth/login", async (req, res) => {
+// POST /auth/login  (username ILI email + password)
+router.post("/login", async (req, res) => {
   try {
-    let { username, email, password } = req.body || {};
-    if (!password || (!username && !email)) {
-      return res.status(400).json({ ok: false, error: "Potrebni su password i (username ili email)" });
-    }
-    let user = null;
-    if (username) {
-      username = norm(username);
-      if (!isU(username)) return res.status(400).json({ ok: false, error: "Neispravan username" });
-      user = await prisma.user.findUnique({ where: { username } });
-    }
-    if (!user && email) user = await prisma.user.findFirst({ where: { email: norm(email) } });
-    if (!user) return res.status(401).json({ ok: false, error: "Invalid credentials" });
+    const { identifier, password } = req.body || {};
+    // frontend može slati { username, password } – pokrij oba
+    const nameOrEmail = identifier || req.body?.username || req.body?.email;
 
-    const ok = await verifyPassword(password, user.password);
-    if (!ok) return res.status(401).json({ ok: false, error: "Invalid credentials" });
+    if (!nameOrEmail || !password) {
+      return res.status(400).json({ ok: false, error: "Username/email i password su obavezni." });
+    }
 
-    const token = signJwt({ userId: user.id });
-    const { name, options } = cookieConf(req);
-    res.cookie(name, token, options);
-    return res.json({ ok: true, user: sanitizeUser(user) });
-  } catch (err) {
-    return res.status(500).json({ ok: false, error: err?.message || "Login failed" });
+    const isEmail = String(nameOrEmail).includes("@");
+    const user = await prisma.user.findFirst({
+      where: isEmail ? { email: nameOrEmail } : { username: nameOrEmail },
+    });
+
+    if (!user) {
+      return res.status(400).json({ ok: false, error: "Pogrešan username/email ili lozinka." });
+    }
+
+    const okPass = await bcrypt.compare(password, user.passwordHash || "");
+    if (!okPass) {
+      return res.status(400).json({ ok: false, error: "Pogrešan username/email ili lozinka." });
+    }
+
+    // Ovde običan “stub” za sesiju (dovoljno da vidimo 200 OK; kasnije ćemo ubaciti pravi token)
+    // res.cookie("sid", "dev", { httpOnly: true, sameSite: "lax" });
+
+    const { id, username, email, createdAt, updatedAt } = user;
+    return res.json({ ok: true, user: { id, username, email, createdAt, updatedAt } });
+  } catch (e) {
+    console.error("LOGIN error:", e);
+    return res.status(500).json({ ok: false, error: "Server error" });
   }
 });
 
-router.get("/auth/me", requireAuth, async (req, res) => {
-  try {
-    const user = await prisma.user.findUnique({ where: { id: req.userId } });
-    if (!user) return res.status(404).json({ ok: false, error: "User not found" });
-    return res.json({ ok: true, user: sanitizeUser(user) });
-  } catch (err) {
-    return res.status(500).json({ ok: false, error: err?.message || "Failed to load me" });
-  }
+// GET /auth/me  (za auto-login check; trenutno samo “stub”)
+router.get("/me", async (_req, res) => {
+  // Ako nemamo pravu sesiju još, vrati ok:false da frontend zna da nije ulogovan.
+  return res.json({ ok: false });
 });
 
-router.post("/auth/logout", (_req, res) => {
-  const name = (_req.app.locals.cookieOpts?.name) || "lc_token";
-  const options = _req.app.locals.cookieOpts?.options || {};
-  res.clearCookie(name, { ...options, maxAge: undefined }); // za svaki sluÄaj
+// POST /auth/logout  (stub)
+router.post("/logout", (req, res) => {
+  // res.clearCookie("sid");
   return res.json({ ok: true });
 });
 
 export default router;
-

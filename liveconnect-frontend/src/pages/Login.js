@@ -1,102 +1,90 @@
-// src/pages/Login.jsx
+// liveconnect-frontend/src/pages/Login.js
 import React, { useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { api } from "../services/api";
+import { useNavigate } from "react-router-dom";
 
-export default function Login({ onAuth = () => {} }) {
-  const [username, setUsername] = useState("");
-  const [email, setEmail]       = useState("");
-  const [password, setPassword] = useState("");
-  const [msg, setMsg]           = useState("Unesi podatke i uloguj se ili registruj.");
-  const [busy, setBusy]         = useState(false);
+export default function Login() {
+  const [identifier, setIdentifier] = useState("");
+  const [password, setPassword]   = useState("");
+  const [loading, setLoading]     = useState(false);
+  const [error, setError]         = useState("");
   const navigate = useNavigate();
 
-  const pretty = (v) => {
-    try { return JSON.stringify(v, null, 2); } catch { return String(v); }
-  };
-
-  async function run(fn) {
-    setBusy(true);
+  async function handleSubmit(e) {
+    e.preventDefault();              // spreči reload
+    setError("");
+    setLoading(true);
     try {
-      const data = await fn();
-      setMsg(pretty(data));
-      if (data?.ok && data?.user) {
-        onAuth(data.user);
-        navigate("/chat", { replace: true });
+      const { data } = await api.post("/auth/login", { identifier, password });
+      // očekujemo { ok: true, user: {...} } ili slično
+      if (data?.ok) {
+        // idi na home/poruke – prilagodi po želji
+        navigate("/");
+      } else {
+        setError(data?.error || "Login nije uspeo");
       }
     } catch (err) {
-      setMsg(pretty(err?.response?.data || { ok: false, error: err?.message || "Network error" }));
+      const msg =
+        err?.response?.data?.error ||
+        err?.response?.data?.message ||
+        err?.message ||
+        "Greška pri logovanju";
+      setError(msg);
     } finally {
-      setBusy(false);
+      setLoading(false);
     }
   }
 
-  const doRegister = () =>
-    run(async () => {
-      const body = { username: username.trim(), password };
-      if (email.trim()) body.email = email.trim();
-      const { data } = await api.post("/auth/register", body);
-      return data;
-    });
-
-  const doLogin = () =>
-    run(async () => {
-      const body = { password };
-      if (email.trim()) body.email = email.trim();
-      else body.username = username.trim().toLowerCase();
-      const { data } = await api.post("/auth/login", body);
-      return data;
-    });
-
   return (
-    <div style={{ maxWidth: 480, margin: "60px auto", fontFamily: "sans-serif" }}>
-      <h1 style={{ marginBottom: 6 }}>LiveConnect</h1>
-      <div style={{ color: "#666", marginBottom: 18 }}>Login / Register</div>
-
-      <div style={{ display: "grid", gap: 10 }}>
-        <label>
-          <div>Username</div>
+    <div style={{ maxWidth: 420, margin: "60px auto", fontFamily: "system-ui, sans-serif" }}>
+      <h1 style={{ marginBottom: 16 }}>Login</h1>
+      <form onSubmit={handleSubmit} style={{ display: "grid", gap: 12 }}>
+        <label style={{ display: "grid", gap: 6 }}>
+          <span>Username ili email</span>
           <input
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
+            value={identifier}
+            onChange={(e) => setIdentifier(e.target.value)}
             placeholder="npr. lesto"
-            style={{ width: "100%", padding: 8 }}
+            autoFocus
+            style={{ padding: 10, border: "1px solid #ccc", borderRadius: 8 }}
           />
         </label>
 
-        <label>
-          <div>Email (opciono)</div>
-          <input
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="npr. test@example.com"
-            style={{ width: "100%", padding: 8 }}
-          />
-        </label>
-
-        <label>
-          <div>Password</div>
+        <label style={{ display: "grid", gap: 6 }}>
+          <span>Lozinka</span>
           <input
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            placeholder="••••••"
-            style={{ width: "100%", padding: 8 }}
+            placeholder="••••••••"
+            style={{ padding: 10, border: "1px solid #ccc", borderRadius: 8 }}
           />
         </label>
 
-        <div style={{ display: "flex", gap: 10, marginTop: 6 }}>
-          <button onClick={doRegister} disabled={busy} style={{ padding: "8px 14px" }}>
-            {busy ? "..." : "Register"}
-          </button>
-          <button onClick={doLogin} disabled={busy} style={{ padding: "8px 14px" }}>
-            {busy ? "..." : "Login"}
-          </button>
-        </div>
+        {error ? (
+          <div style={{ color: "#b00020", background: "#fee", padding: 10, borderRadius: 8 }}>
+            {error}
+          </div>
+        ) : null}
 
-        <pre style={{ background: "#111", color: "#0f0", padding: 12, borderRadius: 8, minHeight: 120 }}>
-{msg}
-        </pre>
+        <button
+          type="submit"
+          disabled={loading || !identifier || !password}
+          style={{
+            padding: "10px 14px",
+            borderRadius: 8,
+            border: "none",
+            background: loading ? "#888" : "#111",
+            color: "#fff",
+            cursor: loading ? "not-allowed" : "pointer",
+          }}
+        >
+          {loading ? "Prijavljivanje..." : "Uđi"}
+        </button>
+      </form>
+
+      <div style={{ marginTop: 16, color: "#666", fontSize: 14 }}>
+        Tip: testiraj u DevTools → Network/Console ako nešto ne radi.
       </div>
     </div>
   );

@@ -1,9 +1,13 @@
-// ESM Prisma singleton (sprečava više instanci u dev-u)
+// liveconnect-backend/prismaClient.js
 import { PrismaClient } from "@prisma/client";
 
-const globalForPrisma = globalThis;
-export const prisma = globalForPrisma.__lc_prisma ?? new PrismaClient();
+const prisma = new PrismaClient({
+  log: ["warn", "error"], // po želji: dodaj "query" u dev-u
+});
 
-if (process.env.NODE_ENV !== "production") {
-  globalForPrisma.__lc_prisma = prisma;
-}
+// (opciono) uredno gasi konekciju kad se proces završava
+process.on("beforeExit", async () => {
+  try { await prisma.$disconnect(); } catch {}
+});
+
+export default prisma;
