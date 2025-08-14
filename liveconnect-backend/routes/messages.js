@@ -1,4 +1,4 @@
-// routes/messages.js
+﻿// routes/messages.js
 import { Router } from "express";
 import { prisma } from "../prismaClient.js";
 import { requireAuth } from "../middleware/requireAuth.js";
@@ -16,15 +16,15 @@ router.post("/messages/send", requireAuth, async (req, res) => {
 
     const to = await prisma.user.findUnique({ where: { username: toUsername } });
     if (!to) return res.status(404).json({ ok: false, error: "primaoc ne postoji" });
-    if (to.id === req.userId) return res.status(400).json({ ok: false, error: "ne možeš poslati sebi" });
+    if (to.id === req.userId) return res.status(400).json({ ok: false, error: "ne moÅ¾eÅ¡ poslati sebi" });
 
     const msg = await prisma.message.create({
       data: { senderId: req.userId, recipientId: to.id, content },
     });
 
-    // Socket emit (ako imaš realtime/io.js sa emitToUser)
+    // Socket emit (ako imaÅ¡ realtime/io.js sa emitToUser)
     try {
-      const { emitToUser } = await import("../realtime/io.js");
+      const { emitToUser } = await import(".../realtime/io.js");
       emitToUser?.(to.id, "messages:new", {
         id: msg.id,
         fromUserId: req.userId,
@@ -49,7 +49,7 @@ router.post("/messages/send", requireAuth, async (req, res) => {
   }
 });
 
-// Sažetak konverzacija (recent)
+// SaÅ¾etak konverzacija (recent)
 router.get("/messages/recent", requireAuth, async (req, res) => {
   try {
     // Nadji sve peer-ove sa kojima je korisnik razmenio poruke ili giftove
@@ -78,7 +78,7 @@ router.get("/messages/recent", requireAuth, async (req, res) => {
       take: 200,
     });
 
-    // grupišemo po peeru i uzimamo najskoriji item (msg ili gift)
+    // grupiÅ¡emo po peeru i uzimamo najskoriji item (msg ili gift)
     const map = new Map(); // key = peerId
     function pushCandidate(peerId, peerUsername, item) {
       const prev = map.get(peerId);
@@ -119,7 +119,7 @@ router.get("/messages/thread", requireAuth, async (req, res) => {
     if (!peerUsername) return res.status(400).json({ ok: false, error: "peer je obavezan" });
 
     const peer = await prisma.user.findUnique({ where: { username: peerUsername } });
-    if (!peer) return res.status(404).json({ ok: false, error: "peer nije pronađen" });
+    if (!peer) return res.status(404).json({ ok: false, error: "peer nije pronaÄ‘en" });
 
     const [msgs, gifts] = await Promise.all([
       prisma.message.findMany({
@@ -172,3 +172,4 @@ router.get("/messages/thread", requireAuth, async (req, res) => {
 });
 
 export default router;
+

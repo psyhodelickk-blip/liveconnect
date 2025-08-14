@@ -1,4 +1,4 @@
-// ESM varijanta health rute
+﻿// ESM varijanta health rute
 import { Router } from "express";
 
 const router = Router();
@@ -8,3 +8,4 @@ router.get("/health", (_req, res) => {
 });
 
 export default router;
+

@@ -1,4 +1,4 @@
-import express from 'express';
+﻿import express from 'express';
 import prisma from '../prismaClient.js';
 import { authenticateToken } from '../middleware/authMiddleware.js';
 
@@ -11,8 +11,9 @@ router.get('/list', authenticateToken, async (req, res) => {
     res.json(users);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ message: 'Greška pri dohvatu korisnika' });
+    res.status(500).json({ message: 'GreÅ¡ka pri dohvatu korisnika' });
   }
 });
 
 export default router;
+

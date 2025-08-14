@@ -1,4 +1,4 @@
-import { Router } from "express";
+﻿import { Router } from "express";
 import { prisma } from "../prismaClient.js";
 import { hashPassword, verifyPassword } from "../utils/password.js";
 import { signJwt } from "../utils/jwt.js";
@@ -26,7 +26,7 @@ router.post("/auth/register", async (req, res) => {
     username = norm(username);
     if (!isU(username)) return res.status(400).json({ ok: false, error: "Username 3-30 znakova (a-z 0-9 . _)" });
 
-    // zauzeće
+    // zauzeÄ‡e
     const exists = await prisma.user.findFirst({
       where: { OR: [{ username }, ...(email ? [{ email: norm(email) }] : [])] },
     });
@@ -85,8 +85,9 @@ router.get("/auth/me", requireAuth, async (req, res) => {
 router.post("/auth/logout", (_req, res) => {
   const name = (_req.app.locals.cookieOpts?.name) || "lc_token";
   const options = _req.app.locals.cookieOpts?.options || {};
-  res.clearCookie(name, { ...options, maxAge: undefined }); // za svaki slučaj
+  res.clearCookie(name, { ...options, maxAge: undefined }); // za svaki sluÄaj
   return res.json({ ok: true });
 });
 
 export default router;
+

@@ -1,4 +1,4 @@
-const express = require("express");
+﻿const express = require("express");
 const cors = require("cors");
 require("dotenv").config();
 
@@ -16,5 +16,6 @@ app.use(healthRouter);
 app.get("/", (_req, res) => res.send("LiveConnect backend up"));
 
 app.listen(PORT, () => {
-  console.log(`✅ Server listening on http://localhost:${PORT}`);
+  console.log(`âœ… Server listening on http://localhost:${PORT}`);
 });
+

@@ -1,4 +1,4 @@
-// server.js
+﻿// server.js
 import express from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
@@ -8,7 +8,7 @@ import "dotenv/config";
 import { requireAuth } from "./auth.js";
 import messagesRoutes from "./messages.js";
 import paymentsRoutes from "./payments.js";
-import { setupRealtime } from "./realtime/io.js";
+import { setupRealtime } from "../realtime/io.js";
 
 const PORT = process.env.PORT || 4000;
 const FRONT = process.env.FRONT_ORIGIN || "http://localhost:8080";
@@ -45,3 +45,5 @@ setupRealtime(httpServer, [FRONT, "http://localhost:3000", "http://localhost:808
 httpServer.listen(PORT, () => {
   console.log(`HTTP+WS listening on ${PORT}`);
 });
+
+

@@ -1,11 +1,11 @@
-import { Router } from "express";
+﻿import { Router } from "express";
 import { prisma } from "../prismaClient.js";
 
 const router = Router();
 
 router.get("/db/health", async (_req, res) => {
   try {
-    // Ne zavisi od tabela – samo testira konekciju
+    // Ne zavisi od tabela â€“ samo testira konekciju
     await prisma.$queryRaw`SELECT 1`;
     res.json({ ok: true, db: "up", time: new Date().toISOString() });
   } catch (err) {
@@ -18,3 +18,4 @@ router.get("/db/health", async (_req, res) => {
 });
 
 export default router;
+
