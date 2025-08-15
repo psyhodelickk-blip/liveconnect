@@ -1,52 +1,68 @@
-// liveconnect-backend/server.js
-import "dotenv/config";
+// backend/server.js
 import express from "express";
 import cors from "cors";
-import cookieParser from "cookie-parser";
+import cookieSession from "cookie-session";
 import http from "http";
 
 import authRoutes from "./routes/auth.js";
-import { initIO } from "./realtime/io.js";
-
-const PORT = process.env.PORT || 4000;
-const ORIGIN = process.env.FRONTEND_ORIGIN || "http://localhost:8080";
+import paymentsRoutes from "./routes/payments.js";
+import messagesRoutes from "./routes/messages.js";           // <-- NOVO
+import { initIO } from "./routes/realtime/io.js";            // <-- NOVO (ok je i ako IO ne koristiš odmah)
 
 const app = express();
 
-// CORS + parsers
-app.use(cors({ origin: ORIGIN, credentials: true }));
-app.use(express.json());
-app.use(cookieParser());
+const PORT = process.env.PORT || 4000;
+const FRONTEND_ORIGIN =
+  process.env.FRONTEND_ORIGIN || "http://localhost:8080";
 
-// Health uvek radi
+const corsOptions = {
+  origin: FRONTEND_ORIGIN,
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+};
+
+// CORS
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions));
+
+app.set("trust proxy", 1);
+app.use(express.json());
+
+// Cookie session
+app.use(
+  cookieSession({
+    name: "sid",
+    secret: process.env.SESSION_SECRET || "dev-secret",
+    sameSite: "lax",
+    httpOnly: true,
+    secure: false, // lokalno
+  })
+);
+
+// Health i debug
 app.get("/health", (_req, res) => {
-  res.json({ ok: true, service: "backend", time: new Date().toISOString() });
+  res.json({ ok: true, service: "backend", origin: FRONTEND_ORIGIN });
+});
+app.post("/debug/echo", (req, res) => {
+  res.json({ ok: true, received: req.body || null });
 });
 
-// Auth odmah montiramo (radi samostalno)
+// Rute
 app.use("/auth", authRoutes);
+app.use("/payments", paymentsRoutes);
+app.use("/messages", messagesRoutes);                       // <-- KLJUČNO
 
-// Ostale rute montiramo *dinamički* da ne sruše boot ako imaju grešku
-(async () => {
-  try {
-    const { default: messagesRoutes } = await import("./routes/messages.js");
-    app.use("/messages", messagesRoutes);
-  } catch (e) {
-    console.error("(!) Messages route nije montiran:", e.message);
-  }
+// Global error handler
+app.use((err, _req, res, _next) => {
+  console.error(err);
+  res.status(500).json({ ok: false, error: "SERVER_ERROR" });
+});
 
-  try {
-    const { default: paymentsRoutes } = await import("./routes/payments.js");
-    app.use("/payments", paymentsRoutes);
-  } catch (e) {
-    console.error("(!) Payments route nije montiran:", e.message);
-  }
+// HTTP server + socket.io
+const server = http.createServer(app);
+initIO(server, FRONTEND_ORIGIN);                            // <-- OK je i ako IO ne koristiš odmah
 
-  // Tek sada startujemo HTTP + socket.io
-  const server = http.createServer(app);
-  initIO(server);
-
-  server.listen(PORT, () => {
-    console.log(`Backend listening on :${PORT} (origin: ${ORIGIN})`);
-  });
-})();
+server.listen(PORT, () => {
+  console.log(`Backend listening on :${PORT} (origin: ${FRONTEND_ORIGIN})`);
+});

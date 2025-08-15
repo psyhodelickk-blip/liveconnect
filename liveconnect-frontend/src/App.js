@@ -1,91 +1,44 @@
-// liveconnect-frontend/src/App.js
-import React, { useEffect, useState } from "react";
-import { BrowserRouter, Routes, Route, Navigate, Link, useLocation } from "react-router-dom";
-import { api } from "./services/api";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { useEffect, useState } from "react";
 import Login from "./pages/Login";
+import ChatPage from "./pages/Chat";
+import { api } from "./services/api";
 
-// Minimalna landing stranica
-function Home() {
-  return (
-    <div style={{ padding: 24, fontFamily: "system-ui, sans-serif" }}>
-      <h2>LiveConnect</h2>
-      <p>Dobrodošao! Idi na <Link to="/login">/login</Link> da se prijaviš ili na <Link to="/app">/app</Link> ako si već ulogovan.</p>
-    </div>
-  );
-}
+function RequireAuth({ children }) {
+  const [state, setState] = useState({ ready: false, ok: false });
 
-// Jednostavan dashboard posle logina (placeholder za chat/poruke)
-function Dashboard() {
-  return (
-    <div style={{ padding: 24, fontFamily: "system-ui, sans-serif" }}>
-      <h2>Dashboard</h2>
-      <p>Ulogovan si. Ovde ide tvoja glavna aplikacija (poruke, stream, itd.).</p>
-      <p><Link to="/">Nazad na početnu</Link></p>
-    </div>
-  );
-}
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const { data } = await api.get("/auth/me");
+        if (alive) setState({ ready: true, ok: !!data?.ok });
+      } catch {
+        if (alive) setState({ ready: true, ok: false });
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
 
-// Loading ekran dok proveravamo /auth/me
-function LoadingScreen() {
-  const loc = useLocation();
-  return (
-    <div style={{ padding: 24, fontFamily: "system-ui, sans-serif" }}>
-      <p>Učitavam ({loc.pathname})…</p>
-    </div>
-  );
-}
-
-// Zaštita ruta: ako nema sesije -> /login
-function Protected({ authed, checked, children }) {
-  if (!checked) return <LoadingScreen />;
-  if (!authed) return <Navigate to="/login" replace />;
+  if (!state.ready) return null;
+  if (!state.ok) return <Navigate to="/login" replace />;
   return children;
 }
 
 export default function App() {
-  const [checked, setChecked] = useState(false);
-  const [authed, setAuthed] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        // Ako backend ima /auth/me i vraća { ok: true, user: {...} }
-        const { data } = await api.get("/auth/me");
-        if (!cancelled) setAuthed(Boolean(data?.ok));
-      } catch {
-        // Ako endpoint ne postoji ili vrati grešku – tretiramo kao neulogovan
-        if (!cancelled) setAuthed(false);
-      } finally {
-        if (!cancelled) setChecked(true);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, []);
-
   return (
     <BrowserRouter>
       <Routes>
-        <Route index element={<Home />} />
-
-        {/* Ako si već ulogovan, /login te vraća na /app */}
+        <Route path="/login" element={<Login />} />
         <Route
-          path="/login"
-          element={authed && checked ? <Navigate to="/app" replace /> : <Login />}
-        />
-
-        {/* Zaštićena ruta za aplikaciju posle logina */}
-        <Route
-          path="/app"
+          path="/chat"
           element={
-            <Protected authed={authed} checked={checked}>
-              <Dashboard />
-            </Protected>
+            <RequireAuth>
+              <ChatPage />
+            </RequireAuth>
           }
         />
-
-        {/* Fallback */}
-        <Route path="*" element={<Navigate to="/" replace />} />
+        <Route path="*" element={<Navigate to="/chat" replace />} />
       </Routes>
     </BrowserRouter>
   );

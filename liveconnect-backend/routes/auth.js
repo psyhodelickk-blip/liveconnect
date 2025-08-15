@@ -1,92 +1,68 @@
-﻿// liveconnect-backend/routes/auth.js
-import express from "express";
-import bcrypt from "bcryptjs";
-import prisma from "../prismaClient.js";
+﻿import express from "express";
+import { prisma } from "../prismaClient.js";
 
 const router = express.Router();
 
-// POST /auth/register
-router.post("/register", async (req, res) => {
+// /auth/me — koristi se za guard na frontendu
+router.get("/me", async (req, res) => {
+  if (!req.session?.userId) return res.json({ ok: false });
+  return res.json({
+    ok: true,
+    user: { id: req.session.userId, username: req.session.username },
+  });
+});
+
+// /auth/register
+router.post("/register", async (req, res, next) => {
   try {
-    const { username, email, password } = req.body || {};
+    const { username, password } = req.body || {};
     if (!username || !password) {
-      return res.status(400).json({ ok: false, error: "Username i password su obavezni." });
+      return res.status(400).json({ ok: false, error: "REQUIRED" });
     }
 
-    const exists = await prisma.user.findFirst({
-      where: {
-        OR: [
-          { username: username },
-          ...(email ? [{ email: email }] : []),
-        ],
-      },
-      select: { id: true },
-    });
+    const exists = await prisma.user.findUnique({ where: { username } });
+    if (exists) return res.status(409).json({ ok: false, error: "USERNAME_TAKEN" });
 
-    if (exists) {
-      return res.status(400).json({ ok: false, error: "Korisnik već postoji." });
-    }
-
-    const passwordHash = await bcrypt.hash(password, 10);
     const user = await prisma.user.create({
-      data: { username, email: email ?? null, passwordHash },
-      select: { id: true, username: true, email: true, createdAt: true, updatedAt: true },
+      data: { username, password }, // u šemi postoji "password"
+      select: { id: true, username: true },
     });
 
-    // TODO: set-cookie token/sesija ako treba
-    return res.json({ ok: true, user });
+    req.session.userId = user.id;
+    req.session.username = user.username;
+    res.json({ ok: true, user });
   } catch (e) {
-    console.error("REGISTER error:", e);
-    return res.status(500).json({ ok: false, error: "Server error" });
+    next(e);
   }
 });
 
-// POST /auth/login  (username ILI email + password)
-router.post("/login", async (req, res) => {
+// /auth/login
+router.post("/login", async (req, res, next) => {
   try {
-    const { identifier, password } = req.body || {};
-    // frontend može slati { username, password } – pokrij oba
-    const nameOrEmail = identifier || req.body?.username || req.body?.email;
-
-    if (!nameOrEmail || !password) {
-      return res.status(400).json({ ok: false, error: "Username/email i password su obavezni." });
+    const { username, password } = req.body || {};
+    if (!username || !password) {
+      return res.status(400).json({ ok: false, error: "REQUIRED" });
     }
 
-    const isEmail = String(nameOrEmail).includes("@");
-    const user = await prisma.user.findFirst({
-      where: isEmail ? { email: nameOrEmail } : { username: nameOrEmail },
-    });
-
-    if (!user) {
-      return res.status(400).json({ ok: false, error: "Pogrešan username/email ili lozinka." });
+    const user = await prisma.user.findUnique({ where: { username } });
+    if (!user || user.password !== password) {
+      return res.status(401).json({ ok: false, error: "BAD_CREDENTIALS" });
     }
 
-    const okPass = await bcrypt.compare(password, user.passwordHash || "");
-    if (!okPass) {
-      return res.status(400).json({ ok: false, error: "Pogrešan username/email ili lozinka." });
-    }
-
-    // Ovde običan “stub” za sesiju (dovoljno da vidimo 200 OK; kasnije ćemo ubaciti pravi token)
-    // res.cookie("sid", "dev", { httpOnly: true, sameSite: "lax" });
-
-    const { id, username, email, createdAt, updatedAt } = user;
-    return res.json({ ok: true, user: { id, username, email, createdAt, updatedAt } });
+    req.session.userId = user.id;
+    req.session.username = user.username;
+    res.json({ ok: true, user: { id: user.id, username: user.username } });
   } catch (e) {
-    console.error("LOGIN error:", e);
-    return res.status(500).json({ ok: false, error: "Server error" });
+    next(e);
   }
 });
 
-// GET /auth/me  (za auto-login check; trenutno samo “stub”)
-router.get("/me", async (_req, res) => {
-  // Ako nemamo pravu sesiju još, vrati ok:false da frontend zna da nije ulogovan.
-  return res.json({ ok: false });
-});
-
-// POST /auth/logout  (stub)
+// /auth/logout
 router.post("/logout", (req, res) => {
-  // res.clearCookie("sid");
-  return res.json({ ok: true });
+  try {
+    req.session?.destroy?.(() => {});
+  } catch {}
+  res.json({ ok: true });
 });
 
 export default router;

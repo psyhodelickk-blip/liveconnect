@@ -1,26 +1,35 @@
 # syntax=docker/dockerfile:1.7
-FROM node:20-bullseye-slim
 
-# OpenSSL 1.1 za Prisma engines + certs
-RUN apt-get update -y \
-  && apt-get install -y --no-install-recommends libssl1.1 openssl ca-certificates \
-  && rm -rf /var/lib/apt/lists/*
-
+FROM node:20-alpine AS base
 WORKDIR /app
 
-# Instaliraj deps (uklj. dev deps jer koristimo prisma CLI u runtime-u)
+# Potrebno za Prisma + TLS
+RUN apk add --no-cache ca-certificates openssl curl
+
+# NPM robusnost (retries/timeouts) – pomaže i @prisma/engines postinstall-u
+ENV npm_config_fetch_retries=6 \
+    npm_config_fetch_retry_factor=2 \
+    npm_config_fetch_retry_mintimeout=20000 \
+    npm_config_fetch_retry_maxtimeout=180000 \
+    npm_config_network_timeout=180000
+
+# Kopiraj package fajlove i .npmrc pre npm ci (radi cache)
 COPY package*.json ./
-RUN --mount=type=cache,target=/root/.npm npm ci
+COPY .npmrc .npmrc
 
-# Prisma client build time (da ne generišemo pri startu)
+# Ako mreža pukne – ponovi
+RUN npm ci || (sleep 5 && npm ci) || (sleep 10 && npm ci)
+
+# Prisma klijent pre full koda (da ranije skine engine-ove)
 COPY prisma ./prisma
-RUN npx prisma generate
+RUN npx prisma generate || (sleep 5 && npx prisma generate)
 
-# Ostatak koda
+# Ostatak aplikacije
 COPY . .
 
-# Entry skripta + skidanje CRLF ako si sa Windows-a
-RUN chmod +x docker-entrypoint.sh && sed -i 's/\r$//' docker-entrypoint.sh
+# Ako imaš entrypoint skriptu koja radi migrate deploy + start
+# obavezno je učini izvršnom ovde (posle COPY . .)
+RUN chmod +x ./docker-entrypoint.sh || true
+ENTRYPOINT ["./docker-entrypoint.sh"]
 
 EXPOSE 4000
-CMD ["./docker-entrypoint.sh"]

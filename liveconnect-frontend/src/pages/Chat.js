@@ -1,87 +1,180 @@
 // src/pages/Chat.jsx
-import React, { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../services/api";
-import { connectSocket, disconnectSocket } from "../socket";
-import Conversations from "../components/Conversations";
-import MessageList from "../components/MessageList";
-import Composer from "../components/Composer";
-import WalletBar from "../components/WalletBar";
-import GiftGrid from "../components/GiftGrid";
+import { ChatAPI } from "../services/chat";
+import { io } from "socket.io-client";
 
-export default function Chat({ user, onLogout = () => {} }) {
-  const navigate = useNavigate();
-  const [selected, setSelected] = useState("");
-  const [showGifts, setShowGifts] = useState(false);
-  const [quickPeer, setQuickPeer] = useState("");
+const apiBase =
+  (import.meta?.env && import.meta.env.VITE_API_URL) ||
+  (typeof process !== "undefined" && process.env?.REACT_APP_API_URL) ||
+  "http://localhost:4000";
 
-  useEffect(() => { connectSocket(); }, []); // <— ključna linija
+export default function Chat() {
+  const [me, setMe] = useState(null);
+  const [peers, setPeers] = useState([]);
+  const [active, setActive] = useState(null);
+  const [messages, setMessages] = useState([]);
+  const [text, setText] = useState("");
+  const socketRef = useRef(null);
+  const scrollRef = useRef(null);
 
-  async function doLogout() {
-    try { await api.post("/auth/logout"); } catch {}
-    disconnectSocket();
-    onLogout();
-    navigate("/login", { replace: true });
+  // ko sam ja
+  useEffect(() => {
+    (async () => {
+      const { data } = await api.get("/auth/me");
+      if (data?.ok) setMe(data.user);
+    })();
+  }, []);
+
+  // peers
+  useEffect(() => {
+    (async () => {
+      const list = await ChatAPI.peers();
+      setPeers(list);
+    })();
+  }, []);
+
+  // socket
+  useEffect(() => {
+    if (!me) return;
+    const s = io(apiBase, { withCredentials: true, transports: ["websocket"] });
+    socketRef.current = s;
+
+    s.on("connect", () => {
+      s.emit("hello", me.id); // pridruži me u sobu user:<id>
+    });
+
+    s.on("message:new", (msg) => {
+      // Primi poruku u real-time-u
+      if (
+        active &&
+        (msg.fromUserId === active.id || msg.toUserId === active.id)
+      ) {
+        setMessages((m) => [...m, msg]);
+        queueMicrotask(() =>
+          scrollRef.current?.scrollTo({ top: 999999, behavior: "smooth" })
+        );
+      }
+    });
+
+    return () => s.close();
+  }, [me, active?.id]);
+
+  // učitaj thread kada promenim sagovornika
+  useEffect(() => {
+    if (!active) return;
+    (async () => {
+      const msgs = await ChatAPI.loadThread(active.id);
+      setMessages(msgs);
+      queueMicrotask(() =>
+        scrollRef.current?.scrollTo({ top: 999999, behavior: "auto" })
+      );
+    })();
+  }, [active?.id]);
+
+  const canSend = useMemo(
+    () => !!active && text.trim().length > 0,
+    [active, text]
+  );
+
+  async function send() {
+    if (!canSend) return;
+    const body = text.trim();
+    setText("");
+    const m = await ChatAPI.send(active.id, body);
+    setMessages((old) => [...old, m]);
+    queueMicrotask(() =>
+      scrollRef.current?.scrollTo({ top: 999999, behavior: "smooth" })
+    );
   }
 
-  function openQuick() {
-    const u = String(quickPeer || "").trim().toLowerCase();
-    if (!u || u === String(user?.username || "").toLowerCase()) return;
-    setSelected(u);
-  }
+  if (!me) return <div className="p-6">Učitavanje…</div>;
 
   return (
-    <div style={{ maxWidth: 1200, margin: "20px auto", padding: 12, fontFamily: "sans-serif" }}>
-      <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-        <h1 style={{ margin: 0 }}>LiveConnect</h1>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <span style={{ fontSize: 14, color: "#444" }}>
-            Ulogovan: <b>{user.username}</b> (id: {user.id})
-          </span>
-          <button onClick={doLogout}>Logout</button>
-        </div>
-      </header>
+    <div className="p-6 grid gap-4 md:grid-cols-[280px_1fr]">
+      <aside className="border rounded-lg p-3 h-[70vh] overflow-auto">
+        <div className="font-semibold mb-2">Ulogovan: {me.username}</div>
+        <div className="text-sm text-gray-500 mb-3">Sagovornici</div>
+        <ul className="space-y-1">
+          {peers.map((p) => (
+            <li key={p.id}>
+              <button
+                onClick={() => setActive(p)}
+                className={
+                  "w-full text-left px-3 py-2 rounded-md border " +
+                  (active?.id === p.id
+                    ? "bg-black text-white"
+                    : "hover:bg-gray-100")
+                }
+              >
+                {p.username}
+              </button>
+            </li>
+          ))}
+          {peers.length === 0 && (
+            <li className="text-sm text-gray-500">Nema drugih korisnika.</li>
+          )}
+        </ul>
+      </aside>
 
-      <WalletBar currentUser={user} peerUsername={selected} />
-
-      <div style={{ marginBottom: 10 }}>
-        <button onClick={() => setShowGifts((v) => !v)}>{showGifts ? "Sakrij gifts" : "Prikaži gifts"}</button>
-      </div>
-
-      {showGifts && (
-        <div style={{ border: "1px solid #eee", borderRadius: 12, marginBottom: 12, background: "#fff" }}>
-          <GiftGrid peerUsername={selected} onSent={() => {}} />
-        </div>
-      )}
-
-      <div style={{ display: "flex", minHeight: "70vh", border: "1px solid #eee", borderRadius: 12, overflow: "hidden" }}>
-        <Conversations currentUser={user} selected={selected} onSelect={setSelected} />
-        <div style={{ display: "flex", flexDirection: "column", flex: 1 }}>
-          {!selected ? (
-            <div style={{ padding: 24, color: "#666" }}>
-              <div style={{ marginBottom: 8 }}>Izaberi razgovor sa leve strane ili započni novi:</div>
-              <div style={{ display: "flex", gap: 6, maxWidth: 360 }}>
-                <input
-                  value={quickPeer}
-                  placeholder="username..."
-                  onChange={(e) => setQuickPeer(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && openQuick()}
-                  style={{ flex: 1, padding: 6, border: "1px solid #ddd", borderRadius: 8 }}
-                />
-                <button onClick={openQuick}>Otvori</button>
-              </div>
-            </div>
+      <section className="border rounded-lg flex flex-col h-[70vh]">
+        <div className="p-3 border-b">
+          {active ? (
+            <div className="font-semibold">Razgovor sa: {active.username}</div>
           ) : (
-            <>
-              <div style={{ padding: "10px 12px", borderBottom: "1px solid #eee", background: "#fff" }}>
-                <b>@{selected}</b>
-              </div>
-              <MessageList currentUser={user} peerUsername={selected} />
-              <Composer peerUsername={selected} onSent={() => {}} />
-            </>
+            <div className="text-gray-500">Izaberi sagovornika sa leve strane.</div>
           )}
         </div>
-      </div>
+
+        <div
+          ref={scrollRef}
+          className="flex-1 overflow-auto p-3 space-y-2 bg-white"
+        >
+          {active &&
+            messages.map((m) => {
+              const mine = m.fromUserId === me.id;
+              return (
+                <div
+                  key={m.id}
+                  className={
+                    "max-w-[75%] px-3 py-2 rounded-lg " +
+                    (mine
+                      ? "ml-auto bg-black text-white"
+                      : "bg-gray-100 text-black")
+                  }
+                >
+                  <div className="text-sm">{m.body}</div>
+                  <div className="text-[11px] opacity-60 mt-1">
+                    {new Date(m.createdAt).toLocaleString()}
+                  </div>
+                </div>
+              );
+            })}
+          {!active && (
+            <div className="text-sm text-gray-500">
+              Poruke će se pojaviti ovde.
+            </div>
+          )}
+        </div>
+
+        <div className="p-3 border-t flex gap-2">
+          <input
+            className="flex-1 border rounded-md px-3 py-2"
+            placeholder={active ? "Upiši poruku…" : "Izaberi sagovornika…"}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && send()}
+            disabled={!active}
+          />
+          <button
+            className="px-4 py-2 rounded-md border bg-black text-white disabled:opacity-40"
+            onClick={send}
+            disabled={!canSend}
+          >
+            Pošalji
+          </button>
+        </div>
+      </section>
     </div>
   );
 }

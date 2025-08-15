@@ -1,32 +1,34 @@
 // liveconnect-frontend/src/services/api.js
-import axios from "axios";
+// Varijanta B: koristimo relativnu bazu, NGINX proxy-ira na backend
+const API_BASE = "/api";
 
-// U produkcijskom buildu CRA, REACT_APP_* vrednosti se “upeku” u bundle.
-// Ako nije definisano, padamo na localhost:4000.
-const baseURL =
-  (typeof window !== "undefined" && window.__API_URL__) ||
-  process.env.REACT_APP_API_URL ||
-  "http://localhost:4000";
+async function apiFetch(path, options = {}) {
+  const res = await fetch(`${API_BASE}${path}`, {
+    headers: {
+      "Content-Type": "application/json",
+      ...(options.headers || {}),
+    },
+    credentials: "include",
+    ...options,
+  });
 
-export const api = axios.create({
-  baseURL,
-  withCredentials: true,
-  headers: {
-    "Content-Type": "application/json",
-  },
-});
-
-// Globalni loger – da vidimo zašto “ništa ne dešava”
-api.interceptors.response.use(
-  (res) => res,
-  (err) => {
-    // Ovo pomaže da vidiš poruku u DevTools konzoli
-    const msg =
-      err?.response?.data?.error ||
-      err?.response?.data?.message ||
-      err?.message ||
-      "Network/unknown error";
-    console.error("[API ERROR]", { url: err?.config?.url, msg, status: err?.response?.status });
-    return Promise.reject(err);
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`HTTP ${res.status} ${res.statusText}: ${text}`);
   }
-);
+
+  // Ako telo nije JSON, vrati prazan objekat da ne puca UI
+  return res.json().catch(() => ({}));
+}
+
+export const api = {
+  register: (data) =>
+    apiFetch("/auth/register", { method: "POST", body: JSON.stringify(data) }),
+  login: (data) =>
+    apiFetch("/auth/login", { method: "POST", body: JSON.stringify(data) }),
+  me: () => apiFetch("/auth/me"),
+  logout: () => apiFetch("/auth/logout", { method: "POST" }),
+  health: () => apiFetch("/health"),
+};
+
+export { API_BASE };

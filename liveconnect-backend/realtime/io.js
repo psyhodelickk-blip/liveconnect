@@ -1,21 +1,22 @@
-// liveconnect-backend/realtime/io.js
+// backend/routes/realtime/io.js
 import { Server } from "socket.io";
+let io;
 
-let io = null;
-
-export function initIO(httpServer) {
-  const origin = process.env.FRONTEND_ORIGIN || "http://localhost:8080";
+export function initIO(httpServer, origin) {
   io = new Server(httpServer, {
     cors: { origin, credentials: true },
+    cookie: { name: "sid" },
   });
 
   io.on("connection", (socket) => {
-    // minimalni handler
-    socket.on("disconnect", () => {});
+    socket.on("join", (userId) => {
+      if (userId) socket.join(String(userId));
+    });
   });
+
+  return io;
 }
 
 export function getIO() {
-  if (!io) throw new Error("Socket.IO nije inicijalizovan");
   return io;
 }
