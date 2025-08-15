@@ -1,68 +1,117 @@
-﻿import express from "express";
-import { prisma } from "../prismaClient.js";
+﻿// C:\Users\user\Desktop\liveconnect\liveconnect-backend\routes\auth.js
+import { Router } from "express";
+import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
+import prisma from "../prismaClient.js";
 
-const router = express.Router();
+const router = Router();
 
-// /auth/me — koristi se za guard na frontendu
-router.get("/me", async (req, res) => {
-  if (!req.session?.userId) return res.json({ ok: false });
-  return res.json({
-    ok: true,
-    user: { id: req.session.userId, username: req.session.username },
+const {
+  JWT_SECRET = "",
+  JWT_EXPIRES_IN = "7d",
+  COOKIE_NAME = "lc_session",
+  COOKIE_SECURE = "false",
+  COOKIE_SAME_SITE = "lax",
+} = process.env;
+
+function signAndSetCookie(res, payload) {
+  if (!JWT_SECRET) {
+    throw new Error("JWT_SECRET missing");
+  }
+  const token = jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+  res.cookie(COOKIE_NAME, token, {
+    httpOnly: true,
+    secure: COOKIE_SECURE === "true",
+    sameSite: COOKIE_SAME_SITE, // 'lax' recommended for localhost
+    maxAge: 7 * 24 * 60 * 60 * 1000,
   });
+}
+
+function publicUser(u) {
+  if (!u) return null;
+  const { password, ...rest } = u;
+  return rest;
+}
+
+router.get("/me", async (req, res) => {
+  try {
+    const raw = req.cookies?.[COOKIE_NAME];
+    if (!raw) return res.json({ ok: true, user: null });
+    if (!JWT_SECRET) return res.status(500).json({ ok: false, error: "SERVER_ENV" });
+
+    const decoded = jwt.verify(raw, JWT_SECRET);
+    const user = await prisma.user.findUnique({ where: { id: decoded.id } });
+    return res.json({ ok: true, user: publicUser(user) });
+  } catch (err) {
+    console.error("GET /auth/me error:", err);
+    return res.json({ ok: true, user: null });
+  }
 });
 
-// /auth/register
-router.post("/register", async (req, res, next) => {
+router.post("/register", async (req, res) => {
   try {
-    const { username, password } = req.body || {};
-    if (!username || !password) {
+    const { username, email, password } = req.body || {};
+    if (!(username || email) || !password) {
       return res.status(400).json({ ok: false, error: "REQUIRED" });
     }
+    const hash = await bcrypt.hash(password, 10);
 
-    const exists = await prisma.user.findUnique({ where: { username } });
-    if (exists) return res.status(409).json({ ok: false, error: "USERNAME_TAKEN" });
+    // napravimo where OR za jedinstvenost
+    const where = email ? { email } : { username };
+    const exists = await prisma.user.findFirst({ where });
+    if (exists) {
+      return res.status(409).json({ ok: false, error: "ALREADY_EXISTS" });
+    }
 
-    const user = await prisma.user.create({
-      data: { username, password }, // u šemi postoji "password"
-      select: { id: true, username: true },
+    const created = await prisma.user.create({
+      data: {
+        username: username ?? null,
+        email: email ?? null,
+        password: hash,
+        name: username ?? email ?? null,
+      },
     });
 
-    req.session.userId = user.id;
-    req.session.username = user.username;
-    res.json({ ok: true, user });
-  } catch (e) {
-    next(e);
+    signAndSetCookie(res, { id: created.id });
+    return res.status(201).json({ ok: true, user: publicUser(created) });
+  } catch (err) {
+    console.error("POST /auth/register error:", err);
+    return res.status(500).json({ ok: false, error: "SERVER_ERROR" });
   }
 });
 
-// /auth/login
-router.post("/login", async (req, res, next) => {
+router.post("/login", async (req, res) => {
   try {
-    const { username, password } = req.body || {};
-    if (!username || !password) {
+    const { username, email, password } = req.body || {};
+    const idField = email || username; // podrži oba
+    if (!idField || !password) {
       return res.status(400).json({ ok: false, error: "REQUIRED" });
     }
 
-    const user = await prisma.user.findUnique({ where: { username } });
-    if (!user || user.password !== password) {
-      return res.status(401).json({ ok: false, error: "BAD_CREDENTIALS" });
+    // Probaj email pa username
+    const user =
+      (await prisma.user.findFirst({ where: { email: idField } })) ||
+      (await prisma.user.findFirst({ where: { username: idField } }));
+
+    if (!user) {
+      return res.status(401).json({ ok: false, error: "INVALID_CREDENTIALS" });
+    }
+    const ok = await bcrypt.compare(password, user.password);
+    if (!ok) {
+      return res.status(401).json({ ok: false, error: "INVALID_CREDENTIALS" });
     }
 
-    req.session.userId = user.id;
-    req.session.username = user.username;
-    res.json({ ok: true, user: { id: user.id, username: user.username } });
-  } catch (e) {
-    next(e);
+    signAndSetCookie(res, { id: user.id });
+    return res.json({ ok: true, user: publicUser(user) });
+  } catch (err) {
+    console.error("POST /auth/login error:", err);
+    return res.status(500).json({ ok: false, error: "SERVER_ERROR" });
   }
 });
 
-// /auth/logout
 router.post("/logout", (req, res) => {
-  try {
-    req.session?.destroy?.(() => {});
-  } catch {}
-  res.json({ ok: true });
+  res.clearCookie(COOKIE_NAME);
+  return res.json({ ok: true });
 });
 
 export default router;
