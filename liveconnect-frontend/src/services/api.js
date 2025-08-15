@@ -1,5 +1,6 @@
 // liveconnect-frontend/src/services/api.js
-// Varijanta PROXY (preporučeno): frontend zove /api, NGINX šalje na backend
+
+// PROXY varijanta: frontend gađa /api, NGINX prosleđuje backendu (backend:4000)
 const API_BASE = "/api";
 
 async function apiFetch(path, options = {}) {
@@ -8,7 +9,7 @@ async function apiFetch(path, options = {}) {
       "Content-Type": "application/json",
       ...(options.headers || {}),
     },
-    credentials: "include",
+    credentials: "include", // važno zbog session cookie-a
     ...options,
   });
 
@@ -16,11 +17,11 @@ async function apiFetch(path, options = {}) {
     const text = await res.text().catch(() => "");
     throw new Error(`HTTP ${res.status} ${res.statusText}: ${text}`);
   }
-
-  // Ako telo nije JSON, ne ruši UI
+  // Ako nema JSON tela, vrati prazan objekat da UI ne puca
   return res.json().catch(() => ({}));
 }
 
+// ---- "Visoki nivo" API helperi koje možemo koristiti svuda ----
 export const api = {
   register: (data) =>
     apiFetch("/auth/register", { method: "POST", body: JSON.stringify(data) }),
@@ -31,4 +32,16 @@ export const api = {
   health: () => apiFetch("/health"),
 };
 
+// ---- Adapter za stari kod: Re.get / Re.post / Re.put / Re.delete ----
+export const Re = {
+  get: (path) => apiFetch(path, { method: "GET" }),
+  post: (path, data) =>
+    apiFetch(path, { method: "POST", body: JSON.stringify(data) }),
+  put: (path, data) =>
+    apiFetch(path, { method: "PUT", body: JSON.stringify(data) }),
+  delete: (path) => apiFetch(path, { method: "DELETE" }),
+};
+
+// Zadovolji i "default import" iz starog koda:  import Re from ".../api"
+export default Re;
 export { API_BASE };
