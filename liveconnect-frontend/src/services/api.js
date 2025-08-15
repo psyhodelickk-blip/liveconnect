@@ -1,5 +1,5 @@
 // liveconnect-frontend/src/services/api.js
-// Varijanta B: koristimo relativnu bazu, NGINX proxy-ira na backend
+// Varijanta PROXY (preporučeno): frontend zove /api, NGINX šalje na backend
 const API_BASE = "/api";
 
 async function apiFetch(path, options = {}) {
@@ -17,7 +17,7 @@ async function apiFetch(path, options = {}) {
     throw new Error(`HTTP ${res.status} ${res.statusText}: ${text}`);
   }
 
-  // Ako telo nije JSON, vrati prazan objekat da ne puca UI
+  // Ako telo nije JSON, ne ruši UI
   return res.json().catch(() => ({}));
 }
 
