@@ -4,8 +4,9 @@ services:
     container_name: liveconnect-db-1
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
       POSTGRES_DB: liveconnect
+      # Ostavljamo trust da bude bez lozinke u DEV
+      POSTGRES_HOST_AUTH_METHOD: trust
     ports:
       - "5433:5432"
     healthcheck:
@@ -22,24 +23,14 @@ services:
     environment:
       PORT: "4000"
       JWT_SECRET: "supersecret_dev_only_change_me"
-      DATABASE_URL: "postgresql://postgres:postgres@db:5432/liveconnect?schema=public"
+      # KLJUČNO: u Docker mreži koristimo db:5432 (ne localhost:5433)
+      DATABASE_URL: "postgresql://postgres@db:5432/liveconnect?schema=public"
+      CORS_ORIGIN: "http://localhost:3000,http://localhost:8080"
+    ports:
+      - "4000:4000"
     depends_on:
       db:
         condition: service_healthy
-    ports:
-      - "4000:4000"
-    restart: unless-stopped
-
-  frontend:
-    build:
-      context: ./liveconnect-frontend
-      args:
-        REACT_APP_API_URL: "http://localhost:4000"
-    container_name: liveconnect-frontend-1
-    ports:
-      - "8080:80"
-    depends_on:
-      - backend
     restart: unless-stopped
 
 volumes:

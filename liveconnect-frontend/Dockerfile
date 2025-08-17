@@ -1,27 +1,35 @@
-# syntax=docker/dockerfile:1.7
+# liveconnect-frontend/Dockerfile
 
-# Build stage
-FROM node:20-alpine AS build
+# ---------- BUILDER ----------
+FROM node:20-alpine AS builder
 WORKDIR /app
 
-# Stabilniji npm (bez CI varijable!)
-ENV npm_config_loglevel=warn \
-    npm_config_fetch_retries=5 \
-    npm_config_fetch_retry_maxtimeout=120000 \
-    npm_config_fetch_retry_mintimeout=20000 \
-    npm_config_registry=https://registry.npmjs.org/
+# Mirror i otpornija mrežna podešavanja (bez zastarelog "timeout")
+ARG NPM_REGISTRY=https://registry.npmjs.org
+RUN npm config set registry ${NPM_REGISTRY} \
+ && npm config set fetch-retries 6 \
+ && npm config set fetch-retry-mintimeout 20000 \
+ && npm config set fetch-retry-maxtimeout 600000 \
+ && npm config set prefer-online true \
+ && npm config set audit false \
+ && npm config set fund false
 
+# Iskoristi keš za dependencije
 COPY package*.json ./
-# Cache npm folder tokom builda (zahteva BuildKit)
-RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund
+RUN --mount=type=cache,target=/root/.npm \
+    (npm ci || (sleep 5 && npm ci) || (sleep 10 && npm ci))
 
+# Build (CRA pravi /build)
 COPY . .
-ARG REACT_APP_API_URL
-ENV REACT_APP_API_URL=$REACT_APP_API_URL
 RUN npm run build
 
-# Serve stage
-FROM nginx:alpine
-COPY --from=build /app/build /usr/share/nginx/html
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+# ---------- RUNTIME (NGINX) ----------
+FROM nginx:alpine AS runtime
+COPY nginx/nginx.conf /etc/nginx/nginx.conf
+COPY nginx/default.conf /etc/nginx/conf.d/default.conf
+
+# CRA output je /app/build
+COPY --from=builder /app/build /usr/share/nginx/html
+
 EXPOSE 80
+CMD ["nginx", "-g", "daemon off;"]

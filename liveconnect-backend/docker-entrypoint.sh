@@ -1,10 +1,12 @@
 #!/bin/sh
 set -e
 
-echo "-> DATABASE_URL: $DATABASE_URL"
-echo "-> Running prisma migrate deploy..."
-# pokušaj migracije; ako nema migracija ili fail, probaj db push (dev-friendly)
-npx prisma migrate deploy || npx prisma db push
+echo "==> Waiting a bit for DB..."
+sleep 2
 
-echo "-> Starting server..."
+echo "==> Running Prisma migrations (dev)..."
+# Ako ima unapred definisanih migracija, primeni ih; ako nema, napravi init na licu mesta
+npx prisma migrate deploy || npx prisma migrate dev --name init || npx prisma db push
+
+echo "==> Starting server..."
 node server.js

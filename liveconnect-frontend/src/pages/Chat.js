@@ -1,180 +1,119 @@
 // src/pages/Chat.jsx
-import { useEffect, useMemo, useRef, useState } from "react";
-import { api } from "../services/api";
-import { ChatAPI } from "../services/chat";
-import { io } from "socket.io-client";
+import React, { useEffect, useState, useRef } from "react";
+import { socket } from "../socket";
 
-const apiBase =
-  (import.meta?.env && import.meta.env.VITE_API_URL) ||
-  (typeof process !== "undefined" && process.env?.REACT_APP_API_URL) ||
-  "http://localhost:4000";
+function api(path, opts = {}) {
+  return fetch(path, {
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    ...opts,
+  }).then(async (r) => {
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data?.error || "SERVER_ERROR");
+    return data;
+  });
+}
 
 export default function Chat() {
-  const [me, setMe] = useState(null);
-  const [peers, setPeers] = useState([]);
-  const [active, setActive] = useState(null);
+  const [room, setRoom] = useState("lobby");
   const [messages, setMessages] = useState([]);
+  const [online, setOnline] = useState([]);
   const [text, setText] = useState("");
-  const socketRef = useRef(null);
-  const scrollRef = useRef(null);
+  const boxRef = useRef(null);
 
-  // ko sam ja
   useEffect(() => {
-    (async () => {
-      const { data } = await api.get("/auth/me");
-      if (data?.ok) setMe(data.user);
-    })();
+    if (!socket.connected) socket.connect();
+    const onMsg = (msg) => setMessages((prev) => [...prev, msg]);
+    socket.on("message", onMsg);
+    return () => socket.off("message", onMsg);
   }, []);
 
-  // peers
+  // učitaj istoriju kad se promeni soba
   useEffect(() => {
+    let active = true;
     (async () => {
-      const list = await ChatAPI.peers();
-      setPeers(list);
-    })();
-  }, []);
-
-  // socket
-  useEffect(() => {
-    if (!me) return;
-    const s = io(apiBase, { withCredentials: true, transports: ["websocket"] });
-    socketRef.current = s;
-
-    s.on("connect", () => {
-      s.emit("hello", me.id); // pridruži me u sobu user:<id>
-    });
-
-    s.on("message:new", (msg) => {
-      // Primi poruku u real-time-u
-      if (
-        active &&
-        (msg.fromUserId === active.id || msg.toUserId === active.id)
-      ) {
-        setMessages((m) => [...m, msg]);
-        queueMicrotask(() =>
-          scrollRef.current?.scrollTo({ top: 999999, behavior: "smooth" })
-        );
+      try {
+        const data = await api(`/chat/history?room=${encodeURIComponent(room)}&limit=50`);
+        if (active) setMessages(data.items || []);
+      } catch (e) {
+        console.error("history", e);
+        setMessages([]);
       }
-    });
-
-    return () => s.close();
-  }, [me, active?.id]);
-
-  // učitaj thread kada promenim sagovornika
-  useEffect(() => {
-    if (!active) return;
-    (async () => {
-      const msgs = await ChatAPI.loadThread(active.id);
-      setMessages(msgs);
-      queueMicrotask(() =>
-        scrollRef.current?.scrollTo({ top: 999999, behavior: "auto" })
-      );
     })();
-  }, [active?.id]);
+    return () => {
+      active = false;
+    };
+  }, [room]);
 
-  const canSend = useMemo(
-    () => !!active && text.trim().length > 0,
-    [active, text]
-  );
+  // “ko je online” — osveži na 5s
+  useEffect(() => {
+    let t;
+    const load = async () => {
+      try {
+        const data = await api("/chat/users-online");
+        setOnline(data.items || []);
+      } catch {}
+    };
+    load();
+    t = setInterval(load, 5000);
+    return () => clearInterval(t);
+  }, []);
 
-  async function send() {
-    if (!canSend) return;
-    const body = text.trim();
+  // scroll na dno kad stigne poruka
+  useEffect(() => {
+    if (boxRef.current) boxRef.current.scrollTop = boxRef.current.scrollHeight;
+  }, [messages]);
+
+  const send = (e) => {
+    e.preventDefault();
+    const t = text.trim();
+    if (!t) return;
+    socket.emit("message", { room, message: t });
     setText("");
-    const m = await ChatAPI.send(active.id, body);
-    setMessages((old) => [...old, m]);
-    queueMicrotask(() =>
-      scrollRef.current?.scrollTo({ top: 999999, behavior: "smooth" })
-    );
-  }
-
-  if (!me) return <div className="p-6">Učitavanje…</div>;
+  };
 
   return (
-    <div className="p-6 grid gap-4 md:grid-cols-[280px_1fr]">
-      <aside className="border rounded-lg p-3 h-[70vh] overflow-auto">
-        <div className="font-semibold mb-2">Ulogovan: {me.username}</div>
-        <div className="text-sm text-gray-500 mb-3">Sagovornici</div>
-        <ul className="space-y-1">
-          {peers.map((p) => (
-            <li key={p.id}>
-              <button
-                onClick={() => setActive(p)}
-                className={
-                  "w-full text-left px-3 py-2 rounded-md border " +
-                  (active?.id === p.id
-                    ? "bg-black text-white"
-                    : "hover:bg-gray-100")
-                }
-              >
-                {p.username}
-              </button>
-            </li>
-          ))}
-          {peers.length === 0 && (
-            <li className="text-sm text-gray-500">Nema drugih korisnika.</li>
-          )}
+    <div style={{ display: "grid", gridTemplateColumns: "260px 1fr", gap: 16, padding: 16 }}>
+      <div>
+        <div><b>Sobe</b></div>
+        <input
+          value={room}
+          onChange={(e) => setRoom(e.target.value)}
+          onBlur={() => socket.emit("join", room)}
+          style={{ width: "100%" }}
+        />
+        <div style={{ marginTop: 16 }}><b>Online</b></div>
+        <ul>
+          {online.map((u, i) => <li key={`${u.username}-${i}`}>{u.username}</li>)}
         </ul>
-      </aside>
+      </div>
 
-      <section className="border rounded-lg flex flex-col h-[70vh]">
-        <div className="p-3 border-b">
-          {active ? (
-            <div className="font-semibold">Razgovor sa: {active.username}</div>
-          ) : (
-            <div className="text-gray-500">Izaberi sagovornika sa leve strane.</div>
-          )}
+      <div>
+        <div style={{ marginBottom: 8 }}>
+          <b>Soba:</b> {room} <span style={{ color: "green" }}>●</span>
         </div>
 
         <div
-          ref={scrollRef}
-          className="flex-1 overflow-auto p-3 space-y-2 bg-white"
+          ref={boxRef}
+          style={{ border: "1px solid #ccc", height: 360, padding: 8, overflowY: "auto", marginBottom: 8 }}
         >
-          {active &&
-            messages.map((m) => {
-              const mine = m.fromUserId === me.id;
-              return (
-                <div
-                  key={m.id}
-                  className={
-                    "max-w-[75%] px-3 py-2 rounded-lg " +
-                    (mine
-                      ? "ml-auto bg-black text-white"
-                      : "bg-gray-100 text-black")
-                  }
-                >
-                  <div className="text-sm">{m.body}</div>
-                  <div className="text-[11px] opacity-60 mt-1">
-                    {new Date(m.createdAt).toLocaleString()}
-                  </div>
-                </div>
-              );
-            })}
-          {!active && (
-            <div className="text-sm text-gray-500">
-              Poruke će se pojaviti ovde.
+          {messages.map((m) => (
+            <div key={m.id ?? `${m.ts}-${m.text.slice(0,5)}`}>
+              <b>{m.user?.username || "anon"}:</b> {m.text}
             </div>
-          )}
+          ))}
         </div>
 
-        <div className="p-3 border-t flex gap-2">
+        <form onSubmit={send}>
           <input
-            className="flex-1 border rounded-md px-3 py-2"
-            placeholder={active ? "Upiši poruku…" : "Izaberi sagovornika…"}
+            style={{ width: "80%" }}
+            placeholder="Poruka..."
             value={text}
             onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && send()}
-            disabled={!active}
           />
-          <button
-            className="px-4 py-2 rounded-md border bg-black text-white disabled:opacity-40"
-            onClick={send}
-            disabled={!canSend}
-          >
-            Pošalji
-          </button>
-        </div>
-      </section>
+          <button type="submit" style={{ marginLeft: 8 }}>Pošalji</button>
+        </form>
+      </div>
     </div>
   );
 }

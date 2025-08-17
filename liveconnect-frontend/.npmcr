@@ -1,0 +1,7 @@
+fund=false
+audit=false
+fetch-retries=6
+fetch-retry-mintimeout=20000
+fetch-retry-maxtimeout=600000
+prefer-online=true
+registry=https://registry.npmmirror.com

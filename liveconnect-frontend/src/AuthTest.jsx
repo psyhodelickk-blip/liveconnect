@@ -1,141 +1,77 @@
-// src/AuthTest.jsx
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { api } from "./services/api";
+import Chat from "./components/Chat";
 
-export default function AuthTest({ onAuth = () => {}, onLogout = () => {} }) {
-  const [username, setUsername] = useState("");
-  const [email, setEmail]       = useState("");
-  const [password, setPassword] = useState("");
-  const [out, setOut]           = useState("Spreman ✅");
-  const [loading, setLoading]   = useState(false);
-  const [last, setLast]         = useState(null);
+export default function AuthTest() {
+  const [username, setUsername] = useState("nikola");
+  const [password, setPassword] = useState("sifra123");
+  const [user, setUser]       = useState(null);
+  const [error, setError]     = useState("");
+  const [debug, setDebug]     = useState(null);
+  const [loading, setLoading] = useState(false);
 
-  const pretty = (v) => {
-    try { return JSON.stringify(v, null, 2); } catch { return String(v); }
-  };
+  useEffect(() => { (async () => { try { const me = await api.me(); if (me?.user) setUser(me.user); } catch {} })(); }, []);
 
-  async function run(name, fn) {
-    setLoading(true);
-    setOut(`→ ${name} ...`);
-    setLast(name);
-    try {
-      const data = await fn();
-      setOut(data);
-      return data;
-    } catch (err) {
-      const payload = err?.response?.data || { ok: false, error: err?.message || "Network error" };
-      setOut(payload);
-      return payload;
-    } finally {
-      setLoading(false);
-    }
+  async function doLogin() {
+    setError(""); setDebug(null); setLoading(true);
+    try { const res = await api.login({ username, password }); setDebug({ step: "login", res }); if (res?.user) setUser(res.user); }
+    catch (e) { setError(`${e.code || e.status || ""} ${e.message || "Server error"}`.trim()); setDebug({ step: "login:error", status: e.status, code: e.code, body: e.body }); }
+    finally { setLoading(false); }
+  }
+  async function doRegister() {
+    setError(""); setDebug(null); setLoading(true);
+    try { const res = await api.register({ username, password }); setDebug({ step: "register", res }); }
+    catch (e) { setError(`${e.code || e.status || ""} ${e.message || "Server error"}`.trim()); setDebug({ step: "register:error", status: e.status, code: e.code, body: e.body }); }
+    finally { setLoading(false); }
+  }
+  async function doLogout() { setLoading(true); try { await api.logout(); setUser(null); } catch {} setLoading(false); }
+  function handleSubmit(e) { e.preventDefault(); doLogin(); }
+
+  if (user) {
+    return (
+      <div style={{ maxWidth: 960, margin: "24px auto", padding: 20 }}>
+        <h2 style={{ marginTop: 0 }}>Dobrodošao, {user.name || user.username || "user"}</h2>
+        <button onClick={doLogout} disabled={loading} style={{ marginBottom: 16 }}>
+          {loading ? "..." : "Odjavi se"}
+        </button>
+
+        <pre style={{ background: "#0b0b0b", color: "#0f0", padding: 10, borderRadius: 8, overflowX: "auto" }}>
+          {JSON.stringify({ user }, null, 2)}
+        </pre>
+
+        {/* >>> OVO je chat blok  <<< */}
+        <div style={{ marginTop: 16 }}>
+          <Chat user={user} />
+        </div>
+      </div>
+    );
   }
 
-  const doRegister = async () => {
-    const data = await run("Register", async () => {
-      const body = { username: username.trim(), password };
-      if (email.trim()) body.email = email.trim();
-      const { data } = await api.post("/auth/register", body);
-      return data;
-    });
-    if (data?.ok && data?.user) onAuth(data.user);
-  };
-
-  const doLogin = async () => {
-    const data = await run("Login", async () => {
-      const body = { password };
-      if (email.trim()) body.email = email.trim();
-      else body.username = username.trim().toLowerCase();
-      const { data } = await api.post("/auth/login", body);
-      return data;
-    });
-    if (data?.ok && data?.user) onAuth(data.user);
-  };
-
-  const doMe = async () => {
-    const data = await run("Me", async () => {
-      const { data } = await api.get("/auth/me");
-      return data;
-    });
-    if (data?.ok && data?.user) onAuth(data.user);
-  };
-
-  const doLogout = async () => {
-    const data = await run("Logout", async () => {
-      const { data } = await api.post("/auth/logout");
-      return data;
-    });
-    if (data?.ok) onLogout();
-  };
-
   return (
-    <div style={{ maxWidth: 560, margin: "40px auto", fontFamily: "sans-serif" }}>
-      <h2>LiveConnect – Auth Test</h2>
-      <div style={{ color: "#666" }}>
-        Backend: <code>{api.defaults.baseURL}</code>
-      </div>
+    <div style={{ maxWidth: 620, margin: "24px auto", padding: 20 }}>
+      <h1 style={{ marginTop: 0 }}>LiveConnect</h1>
 
-      <div style={{ display: "grid", gap: 10, marginTop: 20 }}>
-        <label>
-          <div>Username (za register / ili login bez email-a)</div>
-          <input
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            placeholder="npr. testuser"
-            style={{ width: "100%", padding: 8 }}
-          />
-        </label>
-
-        <label>
-          <div>Email (opciono)</div>
-          <input
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="npr. test@example.com"
-            style={{ width: "100%", padding: 8 }}
-          />
-        </label>
-
-        <label>
-          <div>Password</div>
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="npr. test12345"
-            style={{ width: "100%", padding: 8 }}
-          />
-        </label>
-
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 10 }}>
-          <button type="button" onClick={doRegister} disabled={loading} style={{ padding: "8px 14px" }}>
-            {loading && last === "Register" ? "..." : "Register"}
-          </button>
-          <button type="button" onClick={doLogin} disabled={loading} style={{ padding: "8px 14px" }}>
-            {loading && last === "Login" ? "..." : "Login"}
-          </button>
-          <button type="button" onClick={doMe} disabled={loading} style={{ padding: "8px 14px" }}>
-            {loading && last === "Me" ? "..." : "Me"}
-          </button>
-          <button type="button" onClick={doLogout} disabled={loading} style={{ padding: "8px 14px" }}>
-            {loading && last === "Logout" ? "..." : "Logout"}
-          </button>
+      <form onSubmit={handleSubmit}>
+        <div style={{ marginBottom: 10 }}>
+          <button type="button" onClick={doLogin} disabled={loading}>{loading ? "..." : "Login"}</button>
+          <button type="button" onClick={doRegister} disabled={loading} style={{ marginLeft: 8 }}>{loading ? "..." : "Register"}</button>
         </div>
 
-        <pre
-          style={{
-            background: "#111",
-            color: "#0f0",
-            padding: 12,
-            borderRadius: 8,
-            minHeight: 150,
-            overflowX: "auto",
-            whiteSpace: "pre-wrap",
-          }}
-        >
-{pretty(out)}
+        <label>Username</label>
+        <input value={username} onChange={(e) => setUsername(e.target.value)} style={{ display: "block", width: 320, marginBottom: 10 }} />
+
+        <label>Password</label>
+        <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} style={{ display: "block", width: 320, marginBottom: 10 }} />
+
+        <button type="submit" disabled={loading}>{loading ? "..." : "Uđi"}</button>
+      </form>
+
+      {error && <p style={{ color: "red", marginTop: 12 }}>{error}</p>}
+      {debug && (
+        <pre style={{ background: "#0b0b0b", color: "#0f0", padding: 10, borderRadius: 8, marginTop: 12, overflowX: "auto" }}>
+          {JSON.stringify(debug, null, 2)}
         </pre>
-      </div>
+      )}
     </div>
   );
 }

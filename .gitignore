@@ -1,16 +1,19 @@
-# Ignoriši node_modules
+# root
 node_modules/
-
-# Ignoriši .env fajl (tajne)
 .env
+.env.local
+.env.docker
+docker/*.env
+*.log
 
-# Ignoriši build fajlove
-dist/
-build/
+# backend
+liveconnect-backend/node_modules/
+liveconnect-backend/.env
+liveconnect-backend/.env.*
+liveconnect-backend/prisma/dev.db
 
-# Prisma generisani fajlovi
-prisma/migrations/
-
-# OS fajlovi
-.DS_Store
-Thumbs.db
+# frontend
+liveconnect-frontend/node_modules/
+liveconnect-frontend/.env
+liveconnect-frontend/.env.*
+liveconnect-frontend/build/
